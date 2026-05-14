@@ -29,13 +29,40 @@ const WEEKLY_PLAN = [
   { day: "周日", focus: "主动恢复 + 充分拉伸", emoji: "🌙" },
 ];
 
-const todayIndex = new Date().getDay();
-const dayMap = [6, 0, 1, 2, 3, 4, 5];
+// JS getDay(): 0=Sun,1=Mon,...,6=Sat  →  weekday index 0=Mon,...,6=Sun
+const JS_TO_IDX = [6, 0, 1, 2, 3, 4, 5];
+
+function getWeekKey(date = new Date()) {
+  // ISO week: Monday-based. Returns "YYYY-Www"
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function getWeekDates(weekKey) {
+  // Returns array of 7 "YYYY-MM-DD" strings Mon–Sun for the given ISO week key
+  const [year, wStr] = weekKey.split("-W");
+  const w = parseInt(wStr, 10);
+  const jan4 = new Date(Date.UTC(parseInt(year, 10), 0, 4));
+  const startOfWeek = new Date(jan4);
+  startOfWeek.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (w - 1) * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(startOfWeek);
+    d.setUTCDate(startOfWeek.getUTCDate() + i);
+    return d.toISOString().split("T")[0];
+  });
+}
 
 function genId() { return Math.random().toString(36).slice(2, 8); }
 
 export default function FitnessTracker() {
-  const todayKey = new Date().toISOString().split("T")[0];
+  const today = new Date();
+  const todayKey = today.toISOString().split("T")[0];
+  const weekKey = getWeekKey(today);
+  const todayIdx = JS_TO_IDX[today.getDay()];
 
   const [tasks, setTasks] = useState(() => {
     try { const s = localStorage.getItem("fit_tasks"); return s ? JSON.parse(s) : DEFAULT_TASKS; } catch { return DEFAULT_TASKS; }
@@ -54,18 +81,30 @@ export default function FitnessTracker() {
   const [editingTask, setEditingTask] = useState(null);
   const [taskDraft, setTaskDraft] = useState(null);
   const [addingTask, setAddingTask] = useState(false);
-  const [newTask, setNewTask] = useState({ icon:"✨", title:"", category:"", description:"", duration:"", tip:"", xp:20 });
+  const [newTask, setNewTask] = useState({ icon: "✨", title: "", category: "", description: "", duration: "", tip: "", xp: 20 });
 
   useEffect(() => { try { localStorage.setItem(`fit_${todayKey}`, JSON.stringify(checked)); } catch {} }, [checked, todayKey]);
   useEffect(() => { try { localStorage.setItem("fit_tasks", JSON.stringify(tasks)); } catch {} }, [tasks]);
   useEffect(() => { try { localStorage.setItem("fit_goal", JSON.stringify(goal)); } catch {} }, [goal]);
+
+  // Derive per-day completion % for current week
+  const weekDates = getWeekDates(weekKey);
+  const weekStats = weekDates.map((dateStr) => {
+    try {
+      const raw = localStorage.getItem(`fit_${dateStr}`);
+      if (!raw) return null;
+      const dayChecked = JSON.parse(raw);
+      const done = Object.values(dayChecked).filter(Boolean).length;
+      return tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+    } catch { return null; }
+  });
 
   const toggle = (id) => setChecked(p => ({ ...p, [id]: !p[id] }));
   const completedCount = Object.values(checked).filter(Boolean).length;
   const totalXP = tasks.filter(t => checked[t.id]).reduce((s, t) => s + t.xp, 0);
   const maxXP = tasks.reduce((s, t) => s + t.xp, 0);
   const progress = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
-  const todayPlan = WEEKLY_PLAN[dayMap[todayIndex]];
+  const todayPlan = WEEKLY_PLAN[todayIdx];
 
   const saveGoal = () => { setGoal(goalDraft); setEditingGoal(false); };
   const startEditTask = (task) => { setTaskDraft({ ...task }); setEditingTask(task.id); setExpanded(null); };
@@ -74,257 +113,362 @@ export default function FitnessTracker() {
   const saveNewTask = () => {
     if (!newTask.title.trim()) return;
     setTasks(ts => [...ts, { ...newTask, id: genId() }]);
-    setNewTask({ icon:"✨", title:"", category:"", description:"", duration:"", tip:"", xp:20 });
+    setNewTask({ icon: "✨", title: "", category: "", description: "", duration: "", tip: "", xp: 20 });
     setAddingTask(false);
   };
 
+  const weekCompletedDays = weekStats.filter(v => v !== null && v >= 100).length;
+  const weekAvgPct = (() => {
+    const valid = weekStats.filter(v => v !== null);
+    if (!valid.length) return 0;
+    return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+  })();
+
   return (
-    <div style={{ minHeight:"100vh", background:"#0a0a0f", fontFamily:"'DM Sans',sans-serif", color:"#e8e4dc", position:"relative", overflow:"hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#fff5fb", fontFamily: "'Nunito',sans-serif", color: "#3a003a" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&family=Syne:wght@700;800&display=swap');
-        *{box-sizing:border-box;margin:0;}
-        .bg-orb{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0}
-        .card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:16px;backdrop-filter:blur(10px)}
-        .task-item{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:16px;margin-bottom:10px;cursor:pointer;transition:all 0.2s}
-        .task-item.done{background:rgba(255,182,255,0.06);border-color:rgba(255,182,255,0.2)}
-        .task-item:hover{transform:translateX(3px)}
-        .check-btn{width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:all 0.2s;flex-shrink:0}
-        .check-btn.done{background:#ffb6ff;border-color:#ffb6ff;color:#3a003a}
-        .tab-btn{padding:8px 16px;border-radius:20px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:rgba(255,255,255,0.5);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;transition:all 0.2s}
-        .tab-btn.active{background:rgba(255,182,255,0.15);border-color:#ffb6ff;color:#ffb6ff}
-        .progress-bar{height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden}
-        .progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#ffb6ff,#ff82d5);transition:width 0.6s cubic-bezier(0.34,1.56,0.64,1)}
-        .xp-badge{background:rgba(255,130,213,0.15);border:1px solid rgba(255,130,213,0.3);color:#ff82d5;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
-        .category-tag{font-size:10px;padding:2px 7px;border-radius:6px;background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.4)}
-        .tip-box{background:rgba(255,182,255,0.05);border-left:2px solid rgba(255,182,255,0.4);padding:8px 12px;border-radius:0 8px 8px 0;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5);line-height:1.5}
-        .edit-btn{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all 0.2s;flex-shrink:0}
-        .edit-btn:hover{background:rgba(255,182,255,0.1);border-color:rgba(255,182,255,0.3);color:#ffb6ff}
-        .delete-btn{background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.2);color:rgba(255,100,100,0.7);padding:6px 14px;border-radius:10px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif}
-        .save-btn{background:rgba(255,182,255,0.2);border:1px solid rgba(255,182,255,0.4);color:#ffb6ff;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif}
-        .cancel-btn{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);padding:6px 14px;border-radius:10px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif}
-        .mini-input{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;width:100%;outline:none;transition:border 0.2s}
-        .mini-input:focus{border-color:rgba(255,182,255,0.4)}
-        .mini-input::placeholder{color:rgba(255,255,255,0.2)}
-        .field-label{display:block;font-size:10px;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;margin-top:10px}
-        .field-label:first-child{margin-top:0}
-        .edit-form{background:rgba(255,255,255,0.04);border:1px solid rgba(255,182,255,0.2);border-radius:14px;padding:14px;margin-bottom:10px}
-        .week-day-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07)}
-        .week-day-card.active-day{background:rgba(255,182,255,0.08);border-color:rgba(255,182,255,0.3)}
-        .add-task-btn{width:100%;padding:12px;border-radius:14px;border:1px dashed rgba(255,182,255,0.3);background:rgba(255,182,255,0.04);color:rgba(255,182,255,0.6);font-family:'DM Sans',sans-serif;font-size:13px;cursor:pointer;transition:all 0.2s}
-        .add-task-btn:hover{background:rgba(255,182,255,0.08);border-color:rgba(255,182,255,0.5);color:#ffb6ff}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-        .fade-up{animation:fadeUp 0.35s ease forwards}
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+        * { box-sizing: border-box; margin: 0; }
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #e8c0f0; border-radius: 2px; }
+
+        .hdr { background: linear-gradient(135deg,#ffe0f5 0%,#f0d6ff 100%); padding: 22px 20px 30px; position: relative; overflow: hidden; }
+        .hdr::before { content:''; position:absolute; width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,0.28);top:-50px;right:-40px; }
+        .hdr::after  { content:''; position:absolute; width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,0.18);bottom:-20px;left:10px; }
+
+        .streak-pill { display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.65);border-radius:20px;padding:4px 12px;font-size:12px;font-weight:800;color:#b0348a;margin-bottom:10px; }
+        .hdr-title { font-size:26px;font-weight:900;color:#6a0080;line-height:1.1;margin-bottom:4px;position:relative;z-index:1; }
+        .hdr-sub   { font-size:13px;color:#b06aa0;position:relative;z-index:1; }
+
+        .body { padding: 16px; }
+
+        .prog-card { background:#fff;border-radius:22px;padding:16px 18px;margin-bottom:14px;box-shadow:0 4px 20px rgba(180,80,160,0.10); }
+        .stat-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px; }
+        .stat-box  { background:linear-gradient(135deg,#fdf0ff,#fff0f9);border-radius:16px;padding:12px 14px;text-align:center; }
+        .stat-val  { font-size:22px;font-weight:900;color:#9b2fbf; }
+        .stat-lbl  { font-size:11px;color:#c060a0;margin-top:1px;font-weight:700; }
+
+        .bar-track { height:10px;background:#f5e0ff;border-radius:5px;overflow:hidden; }
+        .bar-fill  { height:100%;border-radius:5px;background:linear-gradient(90deg,#e879f9,#f472b6);transition:width .6s cubic-bezier(.34,1.56,.64,1); }
+
+        .tabs { display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap; }
+        .tab  { padding:8px 14px;border-radius:20px;border:none;font-family:'Nunito',sans-serif;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s; }
+        .tab.active { background:linear-gradient(135deg,#e879f9,#f472b6);color:#fff; }
+        .tab:not(.active) { background:#fff;color:#c060a0;box-shadow:0 2px 8px rgba(180,80,160,0.08); }
+
+        .focus-card { background:linear-gradient(135deg,#fff0fb,#f5f0ff);border-radius:18px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px; }
+
+        .task-card { background:#fff;border-radius:20px;padding:14px 16px;margin-bottom:10px;box-shadow:0 2px 12px rgba(180,80,160,0.07);display:flex;align-items:center;gap:12px;cursor:pointer;transition:transform .15s; }
+        .task-card:hover { transform:translateX(3px); }
+        .task-card.done { background:#fdf4ff;opacity:.78; }
+        .chk { width:30px;height:30px;border-radius:50%;border:2.5px solid #e8a0d5;background:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;cursor:pointer;transition:all .2s; }
+        .chk.done { background:linear-gradient(135deg,#e879f9,#f472b6);border-color:transparent;color:#fff; }
+        .t-icon { font-size:22px;flex-shrink:0; }
+        .t-info { flex:1;min-width:0; }
+        .t-name { font-size:14px;font-weight:800;color:#4a0060;margin-bottom:2px; }
+        .task-card.done .t-name { text-decoration:line-through;color:#c099cc; }
+        .t-meta { font-size:11px;color:#c060a0; }
+        .tag  { display:inline-block;background:#fce4ff;color:#9b2fbf;border-radius:8px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:4px; }
+        .xpb  { display:inline-block;background:linear-gradient(135deg,#fce7f3,#ede9fe);color:#7c3aed;border-radius:8px;padding:1px 7px;font-size:10px;font-weight:800; }
+        .tip-box { background:rgba(232,121,249,.06);border-left:2.5px solid rgba(232,121,249,.4);padding:8px 12px;border-radius:0 10px 10px 0;margin-top:10px;font-size:12px;color:#a060b0;line-height:1.6; }
+
+        .edt-btn  { background:#f9f0ff;border:1.5px solid #e8c0f8;color:#9b2fbf;border-radius:10px;padding:4px 9px;font-size:11px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif;flex-shrink:0; }
+        .save-btn { background:linear-gradient(135deg,#e879f9,#f472b6);border:none;color:#fff;border-radius:12px;padding:7px 16px;font-size:12px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif; }
+        .can-btn  { background:#f5f0ff;border:none;color:#a060c0;border-radius:12px;padding:7px 16px;font-size:12px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif; }
+        .del-btn  { background:#fff0f5;border:none;color:#e05080;border-radius:12px;padding:7px 16px;font-size:12px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif; }
+        .edit-form { background:#fff;border:2px solid #f0c8ff;border-radius:18px;padding:16px;margin-bottom:10px;box-shadow:0 2px 12px rgba(180,80,160,0.07); }
+        .flbl { display:block;font-size:10px;font-weight:800;color:#c060a0;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;margin-top:10px; }
+        .flbl:first-child { margin-top:0; }
+        .finput { background:#fdf4ff;border:1.5px solid #e8c0f8;border-radius:10px;color:#4a0060;padding:8px 11px;font-size:13px;font-family:'Nunito',sans-serif;width:100%;outline:none;font-weight:700; }
+        .finput:focus { border-color:#e879f9; }
+        .finput::placeholder { color:#d0a0d0;font-weight:600; }
+
+        .add-btn { width:100%;padding:14px;border-radius:18px;border:2.5px dashed #e8a0d5;background:transparent;color:#c060a0;font-family:'Nunito',sans-serif;font-size:13px;font-weight:800;cursor:pointer;transition:all .2s; }
+        .add-btn:hover { background:rgba(232,160,213,.08);border-color:#e060c8;color:#9b2fbf; }
+
+        /* ── WEEKLY TRACKER ── */
+        .wk-section { margin-bottom:20px; }
+        .wk-title { font-size:12px;font-weight:900;color:#b060a0;letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px; }
+
+        .wk-summary { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:18px; }
+        .wk-stat { background:#fff;border-radius:16px;padding:12px 14px;text-align:center;box-shadow:0 2px 10px rgba(180,80,160,0.08); }
+        .wk-stat-val { font-size:22px;font-weight:900;color:#9b2fbf; }
+        .wk-stat-lbl { font-size:11px;color:#c060a0;font-weight:700;margin-top:1px; }
+
+        .wk-grid { display:grid;gap:10px; }
+        .wk-day { background:#fff;border-radius:18px;padding:14px 16px;box-shadow:0 2px 10px rgba(180,80,160,0.07); }
+        .wk-day.today-day { background:linear-gradient(135deg,#fff0fb,#f5f0ff);border:2px solid #e8a0f0; }
+        .wk-day.future-day { opacity:.55; }
+
+        .wk-day-top { display:flex;align-items:center;gap:10px;margin-bottom:10px; }
+        .wk-day-emoji { font-size:22px;flex-shrink:0; }
+        .wk-day-name { font-size:13px;font-weight:900;color:#4a0060;flex:1; }
+        .wk-day-focus { font-size:11px;color:#c060a0;font-weight:700; }
+        .wk-today-badge { background:linear-gradient(135deg,#e879f9,#f472b6);color:#fff;font-size:10px;font-weight:900;padding:2px 9px;border-radius:20px; }
+        .wk-pct-label { font-size:13px;font-weight:900;color:#9b2fbf;flex-shrink:0; }
+        .wk-pct-label.perfect { color:#22c55e; }
+
+        .wk-bar-track { height:8px;background:#f5e0ff;border-radius:4px;overflow:hidden; }
+        .wk-bar-fill  { height:100%;border-radius:4px;transition:width .5s ease;background:linear-gradient(90deg,#e879f9,#f472b6); }
+        .wk-bar-fill.perfect { background:linear-gradient(90deg,#34d399,#22c55e); }
+        .wk-bar-fill.empty { background:#f0d0f5; }
+
+        .wk-not-started { font-size:11px;color:#d0a0d0;font-weight:700;text-align:center;padding:4px 0; }
+
+        .week-label { font-size:11px;color:#c060a0;font-weight:700;margin-bottom:14px; }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        .fu { animation:fadeUp .35s ease forwards; }
       `}</style>
 
-      <div className="bg-orb" style={{ width:350,height:350,background:"rgba(255,182,255,0.07)",top:-80,right:-80 }} />
-      <div className="bg-orb" style={{ width:250,height:250,background:"rgba(255,130,213,0.05)",bottom:80,left:-60 }} />
+      {/* ── HEADER ── */}
+      <div className="hdr">
+        <div className="streak-pill">🔥 {streak} 天连击</div>
+        <div className="hdr-title">{goal.title} ✨</div>
+        <div className="hdr-sub">{goal.subtitle}</div>
+        {goal.targetWeight && <div style={{ fontSize: 12, color: "#c06aa0", marginTop: 4, position: "relative", zIndex: 1 }}>目标 {goal.targetWeight}{goal.targetDate && ` · ${goal.targetDate}`}</div>}
+        <div style={{ position: "absolute", right: 18, top: 18, fontSize: 38, opacity: .45, zIndex: 1 }}>🌸</div>
+        {!editingGoal && (
+          <button className="edt-btn" onClick={() => { setGoalDraft(goal); setEditingGoal(true); }}
+            style={{ position: "absolute", bottom: 16, right: 16, zIndex: 2, background: "rgba(255,255,255,.7)", border: "none" }}>
+            编辑目标
+          </button>
+        )}
+      </div>
 
-      <div style={{ maxWidth:480, margin:"0 auto", padding:"28px 16px 80px", position:"relative", zIndex:1 }}>
+      <div className="body">
 
-        {/* Header */}
-        <div className="fade-up" style={{ marginBottom:20 }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
-            <p style={{ fontSize:12, color:"rgba(255,255,255,0.35)", letterSpacing:"0.1em", textTransform:"uppercase" }}>
-              {new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}
-            </p>
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{ fontSize:15 }}>🔥</span>
-              <span style={{ fontSize:13, color:"#ff8c42", fontWeight:700 }}>{streak} 天连击</span>
+        {/* Goal edit form */}
+        {editingGoal && (
+          <div className="edit-form fu" style={{ marginBottom: 14 }}>
+            <label className="flbl">计划名称</label>
+            <input className="finput" value={goalDraft.title} onChange={e => setGoalDraft(p => ({ ...p, title: e.target.value }))} placeholder="美女养成计划" />
+            <label className="flbl">副标题</label>
+            <input className="finput" value={goalDraft.subtitle} onChange={e => setGoalDraft(p => ({ ...p, subtitle: e.target.value }))} placeholder="减脂塑形 · 体态改善" />
+            <label className="flbl">目标体重</label>
+            <input className="finput" value={goalDraft.targetWeight} onChange={e => setGoalDraft(p => ({ ...p, targetWeight: e.target.value }))} placeholder="例如 52 kg" />
+            <label className="flbl">目标日期</label>
+            <input className="finput" type="date" value={goalDraft.targetDate} onChange={e => setGoalDraft(p => ({ ...p, targetDate: e.target.value }))} />
+            <label className="flbl">我的动力</label>
+            <input className="finput" value={goalDraft.notes} onChange={e => setGoalDraft(p => ({ ...p, notes: e.target.value }))} placeholder="写下你的动力..." />
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button className="save-btn" onClick={saveGoal}>保存</button>
+              <button className="can-btn" onClick={() => setEditingGoal(false)}>取消</button>
             </div>
           </div>
-
-          {editingGoal ? (
-            <div className="edit-form">
-              <label className="field-label">计划名称</label>
-              <input className="mini-input" value={goalDraft.title} onChange={e=>setGoalDraft(p=>({...p,title:e.target.value}))} placeholder="美女养成计划" />
-              <label className="field-label">副标题</label>
-              <input className="mini-input" value={goalDraft.subtitle} onChange={e=>setGoalDraft(p=>({...p,subtitle:e.target.value}))} placeholder="减脂塑形 · 体态改善" />
-              <label className="field-label">目标体重（可选）</label>
-              <input className="mini-input" value={goalDraft.targetWeight} onChange={e=>setGoalDraft(p=>({...p,targetWeight:e.target.value}))} placeholder="例如 52 kg" />
-              <label className="field-label">目标日期（可选）</label>
-              <input className="mini-input" type="date" value={goalDraft.targetDate} onChange={e=>setGoalDraft(p=>({...p,targetDate:e.target.value}))} />
-              <label className="field-label">我的动力</label>
-              <input className="mini-input" value={goalDraft.notes} onChange={e=>setGoalDraft(p=>({...p,notes:e.target.value}))} placeholder="写下你的动力..." />
-              <div style={{ display:"flex", gap:8, marginTop:12 }}>
-                <button className="save-btn" onClick={saveGoal}>保存</button>
-                <button className="cancel-btn" onClick={()=>setEditingGoal(false)}>取消</button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-              <div>
-                <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:26, fontWeight:800, letterSpacing:"-0.02em", color:"#fff", lineHeight:1.15 }}>
-                  <span style={{ color:"#ffb6ff" }}>{goal.title.slice(0,2)}</span>{goal.title.slice(2)}
-                </h1>
-                <p style={{ fontSize:13, color:"rgba(255,255,255,0.4)", marginTop:3 }}>{goal.subtitle}</p>
-                {goal.targetWeight && <p style={{ fontSize:12, color:"rgba(255,182,255,0.6)", marginTop:2 }}>目标 {goal.targetWeight}{goal.targetDate && ` · ${goal.targetDate}`}</p>}
-                {goal.notes && <p style={{ fontSize:12, color:"rgba(255,255,255,0.3)", marginTop:2, fontStyle:"italic" }}>{goal.notes}</p>}
-              </div>
-              <button className="edit-btn" onClick={()=>{ setGoalDraft(goal); setEditingGoal(true); }} style={{ marginTop:4 }}>编辑目标</button>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Progress card */}
-        <div className="card fade-up" style={{ padding:"18px 20px", marginBottom:14, animationDelay:"0.05s" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <div>
-              <p style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginBottom:2 }}>今日完成度</p>
-              <p style={{ fontSize:26, fontFamily:"'Syne',sans-serif", fontWeight:800, color:"#fff" }}>
-                {completedCount}<span style={{ fontSize:14, color:"rgba(255,255,255,0.3)", fontWeight:400 }}>/{tasks.length}</span>
-              </p>
+        <div className="prog-card fu">
+          <div className="stat-grid">
+            <div className="stat-box">
+              <div className="stat-val">{completedCount}<span style={{ fontSize: 14, color: "#c099cc", fontWeight: 700 }}>/{tasks.length}</span></div>
+              <div className="stat-lbl">今日完成</div>
             </div>
-            <div style={{ textAlign:"right" }}>
-              <p style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginBottom:2 }}>经验值</p>
-              <p style={{ fontSize:26, fontFamily:"'Syne',sans-serif", fontWeight:800, color:"#ff82d5" }}>
-                {totalXP}<span style={{ fontSize:14, color:"rgba(255,255,255,0.3)", fontWeight:400 }}>/{maxXP}</span>
-              </p>
+            <div className="stat-box">
+              <div className="stat-val" style={{ color: "#f472b6" }}>{totalXP}<span style={{ fontSize: 14, color: "#c099cc", fontWeight: 700 }}>/{maxXP}</span></div>
+              <div className="stat-lbl">经验值 XP</div>
             </div>
           </div>
-          <div className="progress-bar"><div className="progress-fill" style={{ width:`${progress}%` }} /></div>
-          <p style={{ fontSize:11, color:"rgba(255,255,255,0.3)", marginTop:6, textAlign:"right" }}>{progress}% 完成</p>
+          <div className="bar-track"><div className="bar-fill" style={{ width: `${progress}%` }} /></div>
+          <div style={{ textAlign: "right", fontSize: 11, color: "#c060a0", marginTop: 6, fontWeight: 700 }}>{progress}% 完成</div>
           {completedCount === tasks.length && tasks.length > 0 && (
-            <div style={{ marginTop:12, textAlign:"center", padding:"8px", background:"rgba(255,182,255,0.1)", borderRadius:8, color:"#ffb6ff", fontSize:13, fontWeight:600 }}>
+            <div style={{ marginTop: 10, textAlign: "center", padding: "10px", background: "linear-gradient(135deg,#fce4ff,#fce7f3)", borderRadius: 12, color: "#9b2fbf", fontSize: 13, fontWeight: 900 }}>
               🌸 今日全部完成！你真的很棒！
             </div>
           )}
         </div>
 
         {/* Today's focus */}
-        <div className="card fade-up" style={{ padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", gap:12, animationDelay:"0.08s" }}>
-          <span style={{ fontSize:22 }}>{todayPlan.emoji}</span>
+        <div className="focus-card fu">
+          <div style={{ fontSize: 26 }}>{todayPlan.emoji}</div>
           <div>
-            <p style={{ fontSize:10, color:"rgba(255,255,255,0.35)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:2 }}>今日重点</p>
-            <p style={{ fontSize:14, fontWeight:600, color:"#fff" }}>{todayPlan.focus}</p>
+            <div style={{ fontSize: 10, fontWeight: 900, color: "#c060a0", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>今日重点</div>
+            <div style={{ fontSize: 14, fontWeight: 900, color: "#5a007a" }}>{todayPlan.focus}</div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display:"flex", gap:8, marginBottom:18, flexWrap:"wrap" }}>
-          {[["today","今日任务"],["week","每周计划"],["tips","减脂要点"]].map(([key,label])=>(
-            <button key={key} className={`tab-btn ${tab===key?"active":""}`} onClick={()=>setTab(key)}>{label}</button>
+        <div className="tabs">
+          {[["today", "今日任务"], ["week", "每周计划"], ["tips", "减脂要点"]].map(([k, l]) => (
+            <button key={k} className={`tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
 
-        {/* TODAY TAB */}
+        {/* ── TODAY TAB ── */}
         {tab === "today" && (
-          <div className="fade-up">
-            {tasks.map((task) => (
+          <div className="fu">
+            {tasks.map(task => (
               editingTask === task.id ? (
                 <div key={task.id} className="edit-form">
-                  <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                    <input className="mini-input" value={taskDraft.icon} onChange={e=>setTaskDraft(p=>({...p,icon:e.target.value}))} style={{ width:52, textAlign:"center", fontSize:20, flexShrink:0 }} />
-                    <input className="mini-input" value={taskDraft.title} onChange={e=>setTaskDraft(p=>({...p,title:e.target.value}))} placeholder="任务名称" />
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input className="finput" value={taskDraft.icon} onChange={e => setTaskDraft(p => ({ ...p, icon: e.target.value }))} style={{ width: 52, textAlign: "center", fontSize: 20, flexShrink: 0 }} />
+                    <input className="finput" value={taskDraft.title} onChange={e => setTaskDraft(p => ({ ...p, title: e.target.value }))} placeholder="任务名称" />
                   </div>
-                  <label className="field-label">分类</label>
-                  <input className="mini-input" value={taskDraft.category} onChange={e=>setTaskDraft(p=>({...p,category:e.target.value}))} />
-                  <label className="field-label">描述</label>
-                  <input className="mini-input" value={taskDraft.description} onChange={e=>setTaskDraft(p=>({...p,description:e.target.value}))} />
-                  <label className="field-label">时长/目标</label>
-                  <input className="mini-input" value={taskDraft.duration} onChange={e=>setTaskDraft(p=>({...p,duration:e.target.value}))} />
-                  <label className="field-label">科学提示</label>
-                  <input className="mini-input" value={taskDraft.tip} onChange={e=>setTaskDraft(p=>({...p,tip:e.target.value}))} />
-                  <label className="field-label">经验值 XP</label>
-                  <input className="mini-input" type="number" value={taskDraft.xp} onChange={e=>setTaskDraft(p=>({...p,xp:Number(e.target.value)}))} />
-                  <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                  <label className="flbl">分类</label>
+                  <input className="finput" value={taskDraft.category} onChange={e => setTaskDraft(p => ({ ...p, category: e.target.value }))} />
+                  <label className="flbl">描述</label>
+                  <input className="finput" value={taskDraft.description} onChange={e => setTaskDraft(p => ({ ...p, description: e.target.value }))} />
+                  <label className="flbl">时长/目标</label>
+                  <input className="finput" value={taskDraft.duration} onChange={e => setTaskDraft(p => ({ ...p, duration: e.target.value }))} />
+                  <label className="flbl">科学提示</label>
+                  <input className="finput" value={taskDraft.tip} onChange={e => setTaskDraft(p => ({ ...p, tip: e.target.value }))} />
+                  <label className="flbl">经验值 XP</label>
+                  <input className="finput" type="number" value={taskDraft.xp} onChange={e => setTaskDraft(p => ({ ...p, xp: Number(e.target.value) }))} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                     <button className="save-btn" onClick={saveTask}>保存</button>
-                    <button className="cancel-btn" onClick={()=>setEditingTask(null)}>取消</button>
-                    <button className="delete-btn" onClick={()=>deleteTask(task.id)} style={{ marginLeft:"auto" }}>删除</button>
+                    <button className="can-btn" onClick={() => setEditingTask(null)}>取消</button>
+                    <button className="del-btn" onClick={() => deleteTask(task.id)} style={{ marginLeft: "auto" }}>删除</button>
                   </div>
                 </div>
               ) : (
-                <div key={task.id} className={`task-item ${checked[task.id]?"done":""}`} onClick={()=>setExpanded(expanded===task.id?null:task.id)}>
-                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <button className={`check-btn ${checked[task.id]?"done":""}`} onClick={e=>{e.stopPropagation();toggle(task.id);}}>
-                      {checked[task.id]?"✓":""}
-                    </button>
-                    <span style={{ fontSize:20 }}>{task.icon}</span>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3, flexWrap:"wrap" }}>
-                        <span className="category-tag">{task.category}</span>
-                        <span className="xp-badge">+{task.xp} XP</span>
-                      </div>
-                      <p style={{ fontSize:15, fontWeight:600, color:checked[task.id]?"rgba(255,255,255,0.4)":"#fff", textDecoration:checked[task.id]?"line-through":"none" }}>{task.title}</p>
-                      <p style={{ fontSize:12, color:"rgba(255,255,255,0.35)", marginTop:2 }}>{task.description} · {task.duration}</p>
-                    </div>
-                    <button className="edit-btn" onClick={e=>{e.stopPropagation();startEditTask(task);}}>编辑</button>
+                <div key={task.id} className={`task-card ${checked[task.id] ? "done" : ""}`} onClick={() => setExpanded(expanded === task.id ? null : task.id)}>
+                  <button className={`chk ${checked[task.id] ? "done" : ""}`} onClick={e => { e.stopPropagation(); toggle(task.id); }}>{checked[task.id] ? "✓" : ""}</button>
+                  <div className="t-icon">{task.icon}</div>
+                  <div className="t-info">
+                    <div style={{ marginBottom: 3 }}><span className="tag">{task.category}</span><span className="xpb">+{task.xp} XP</span></div>
+                    <div className="t-name">{task.title}</div>
+                    <div className="t-meta">{task.description} · {task.duration}</div>
                   </div>
-                  {expanded===task.id && task.tip && <div className="tip-box">💡 {task.tip}</div>}
+                  <button className="edt-btn" onClick={e => { e.stopPropagation(); startEditTask(task); }}>编辑</button>
+                  {expanded === task.id && task.tip && <div className="tip-box" style={{ gridColumn: "1/-1" }}>💡 {task.tip}</div>}
                 </div>
               )
             ))}
-
             {addingTask ? (
               <div className="edit-form">
-                <p style={{ fontSize:13, fontWeight:600, color:"#ffb6ff", marginBottom:10 }}>＋ 添加新任务</p>
-                <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                  <input className="mini-input" value={newTask.icon} onChange={e=>setNewTask(p=>({...p,icon:e.target.value}))} style={{ width:52, textAlign:"center", fontSize:20, flexShrink:0 }} />
-                  <input className="mini-input" value={newTask.title} onChange={e=>setNewTask(p=>({...p,title:e.target.value}))} placeholder="任务名称 *" />
+                <div style={{ fontSize: 13, fontWeight: 900, color: "#e879f9", marginBottom: 10 }}>＋ 添加新任务</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input className="finput" value={newTask.icon} onChange={e => setNewTask(p => ({ ...p, icon: e.target.value }))} style={{ width: 52, textAlign: "center", fontSize: 20, flexShrink: 0 }} />
+                  <input className="finput" value={newTask.title} onChange={e => setNewTask(p => ({ ...p, title: e.target.value }))} placeholder="任务名称 *" />
                 </div>
-                <label className="field-label">分类</label>
-                <input className="mini-input" value={newTask.category} onChange={e=>setNewTask(p=>({...p,category:e.target.value}))} placeholder="例如：皮肤护理" />
-                <label className="field-label">描述</label>
-                <input className="mini-input" value={newTask.description} onChange={e=>setNewTask(p=>({...p,description:e.target.value}))} placeholder="具体内容" />
-                <label className="field-label">时长/目标</label>
-                <input className="mini-input" value={newTask.duration} onChange={e=>setNewTask(p=>({...p,duration:e.target.value}))} placeholder="例如：15 分钟" />
-                <label className="field-label">提示（可选）</label>
-                <input className="mini-input" value={newTask.tip} onChange={e=>setNewTask(p=>({...p,tip:e.target.value}))} placeholder="小贴士" />
-                <label className="field-label">经验值 XP</label>
-                <input className="mini-input" type="number" value={newTask.xp} onChange={e=>setNewTask(p=>({...p,xp:Number(e.target.value)}))} />
-                <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                <label className="flbl">分类</label>
+                <input className="finput" value={newTask.category} onChange={e => setNewTask(p => ({ ...p, category: e.target.value }))} placeholder="例如：皮肤护理" />
+                <label className="flbl">描述</label>
+                <input className="finput" value={newTask.description} onChange={e => setNewTask(p => ({ ...p, description: e.target.value }))} placeholder="具体内容" />
+                <label className="flbl">时长/目标</label>
+                <input className="finput" value={newTask.duration} onChange={e => setNewTask(p => ({ ...p, duration: e.target.value }))} placeholder="例如：15 分钟" />
+                <label className="flbl">提示</label>
+                <input className="finput" value={newTask.tip} onChange={e => setNewTask(p => ({ ...p, tip: e.target.value }))} placeholder="小贴士（可选）" />
+                <label className="flbl">经验值 XP</label>
+                <input className="finput" type="number" value={newTask.xp} onChange={e => setNewTask(p => ({ ...p, xp: Number(e.target.value) }))} />
+                <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                   <button className="save-btn" onClick={saveNewTask}>添加</button>
-                  <button className="cancel-btn" onClick={()=>setAddingTask(false)}>取消</button>
+                  <button className="can-btn" onClick={() => setAddingTask(false)}>取消</button>
                 </div>
               </div>
             ) : (
-              <button className="add-task-btn" onClick={()=>setAddingTask(true)}>＋ 添加自定义任务</button>
+              <button className="add-btn" onClick={() => setAddingTask(true)}>＋ 添加自定义任务</button>
             )}
           </div>
         )}
 
-        {/* WEEK TAB */}
+        {/* ── WEEK TAB ── */}
         {tab === "week" && (
-          <div className="fade-up" style={{ display:"grid", gap:10 }}>
-            {WEEKLY_PLAN.map((plan, i) => (
-              <div key={i} className={`week-day-card ${dayMap[todayIndex]===i?"active-day":""}`}>
-                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <span style={{ fontSize:22 }}>{plan.emoji}</span>
-                  <div>
-                    <p style={{ fontSize:12, fontWeight:700, color:dayMap[todayIndex]===i?"#ffb6ff":"rgba(255,255,255,0.5)", marginBottom:2 }}>
-                      {plan.day}{dayMap[todayIndex]===i&&" · 今天"}
-                    </p>
-                    <p style={{ fontSize:14, color:"#fff", fontWeight:500 }}>{plan.focus}</p>
-                  </div>
+          <div className="fu">
+
+            {/* Weekly summary stats */}
+            <div className="wk-section">
+              <div className="wk-title">本周打卡总览</div>
+              <div className="week-label">
+                {weekDates[0]} ~ {weekDates[6]}
+              </div>
+              <div className="wk-summary">
+                <div className="wk-stat">
+                  <div className="wk-stat-val">{weekCompletedDays}<span style={{ fontSize: 14, color: "#c099cc", fontWeight: 700 }}>/7</span></div>
+                  <div className="wk-stat-lbl">全勤天数</div>
+                </div>
+                <div className="wk-stat">
+                  <div className="wk-stat-val" style={{ color: weekAvgPct >= 80 ? "#22c55e" : "#9b2fbf" }}>{weekAvgPct}%</div>
+                  <div className="wk-stat-lbl">平均完成率</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Per-day breakdown */}
+            <div className="wk-section">
+              <div className="wk-title">每日完成情况</div>
+              <div className="wk-grid">
+                {WEEKLY_PLAN.map((plan, i) => {
+                  const pct = weekStats[i];
+                  const isToday = i === todayIdx;
+                  const isPast = i < todayIdx;
+                  const isFuture = i > todayIdx;
+                  const isPerfect = pct !== null && pct >= 100;
+                  return (
+                    <div key={i} className={`wk-day ${isToday ? "today-day" : ""} ${isFuture ? "future-day" : ""}`}>
+                      <div className="wk-day-top">
+                        <div className="wk-day-emoji">{plan.emoji}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                            <span className="wk-day-name">{plan.day}</span>
+                            {isToday && <span className="wk-today-badge">今天</span>}
+                          </div>
+                          <div className="wk-day-focus">{plan.focus}</div>
+                        </div>
+                        {pct !== null ? (
+                          <span className={`wk-pct-label ${isPerfect ? "perfect" : ""}`}>
+                            {isPerfect ? "✓ 100%" : `${pct}%`}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#d0a0d0", fontWeight: 700 }}>
+                            {isFuture ? "—" : "未记录"}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Progress bar */}
+                      {pct !== null ? (
+                        <div className="wk-bar-track">
+                          <div className={`wk-bar-fill ${isPerfect ? "perfect" : pct === 0 ? "empty" : ""}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      ) : (
+                        <div className="wk-bar-track">
+                          <div className="wk-bar-fill empty" style={{ width: "0%" }} />
+                        </div>
+                      )}
+
+                      {/* Motivational micro-copy */}
+                      {isToday && pct !== null && !isPerfect && (
+                        <div style={{ fontSize: 11, color: "#c060a0", fontWeight: 700, marginTop: 6 }}>
+                          还差 {tasks.length - Math.round(pct * tasks.length / 100)} 项，加油！✨
+                        </div>
+                      )}
+                      {isPerfect && (
+                        <div style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, marginTop: 6 }}>
+                          🌟 完美完成！
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ── TIPS TAB ── */}
+        {tab === "tips" && (
+          <div className="fu">
+            {[
+              { icon: "🔥", title: "热量缺口", content: "每日热量缺口控制在300–500kcal，避免过度节食导致肌肉流失。慢慢来，每周减重0.5–1kg最理想。" },
+              { icon: "💪", title: "力量训练优先", content: "减脂期不能只做有氧！力量训练提高基础代谢率，帮你在休息时也持续燃烧脂肪，并塑造肌肉线条。" },
+              { icon: "🥩", title: "蛋白质是关键", content: "高蛋白饮食保留肌肉、提升饱腹感、加速代谢。每天每公斤体重摄入1.6–2g蛋白质是减脂期标配。" },
+              { icon: "✨", title: "皮肤与体态", content: "多喝水、保证睡眠、补充胶原蛋白和维生素C，减脂同时保持皮肤光泽弹嫩。" },
+              { icon: "🧘", title: "体态改善重点", content: "圆肩驼背：每天拉伸胸大肌，强化中下斜方肌和菱形肌。骨盆前倾：强化臀部和腹部，拉伸髋屈肌。" },
+              { icon: "🌙", title: "睡眠与恢复", content: "睡眠不足使皮质醇升高，抑制脂肪分解，增加暴食欲望。7–9小时优质睡眠是减脂的隐藏利器。" },
+              { icon: "📏", title: "衡量进展", content: "不要只看体重！拍照对比、量围度（腰/臀/手臂）、感受体力变化，这些往往比体重更能反映真实进步。" },
+            ].map((tip, i) => (
+              <div key={i} style={{ background: "#fff", borderRadius: 20, padding: "16px", marginBottom: 10, boxShadow: "0 2px 12px rgba(180,80,160,.07)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 22, flexShrink: 0 }}>{tip.icon}</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: "#9b2fbf", marginBottom: 5 }}>{tip.title}</div>
+                  <div style={{ fontSize: 13, color: "#a060b0", lineHeight: 1.7, fontWeight: 600 }}>{tip.content}</div>
                 </div>
               </div>
             ))}
           </div>
         )}
 
-        {/* TIPS TAB */}
-        {tab === "tips" && (
-          <div className="fade-up">
-            {[
-              { icon:"🔥", title:"热量缺口", content:"每日热量缺口控制在300–500kcal，避免过度节食导致肌肉流失。慢慢来，每周减重0.5–1kg最理想。" },
-              { icon:"💪", title:"力量训练优先", content:"减脂期不能只做有氧！力量训练提高基础代谢率，帮你在休息时也持续燃烧脂肪，并塑造肌肉线条。" },
-              { icon:"🥩", title:"蛋白质是关键", content:"高蛋白饮食保留肌肉、提升饱腹感、加速代谢。每天每公斤体重摄入1.6–2g蛋白质是减脂期标配。" },
-              { icon:"✨", title:"皮肤与体态", content:"多喝水、保证睡眠、补充胶原蛋白和维生素C，减脂同时保持皮肤光泽弹嫩。" },
-              { icon:"🧘", title:"体态改善重点", content:"圆肩驼背：每天拉伸胸大肌，强化中下斜方肌和菱形肌。骨盆前倾：强化臀部和腹部，拉伸髋屈肌。" },
-              { icon:"🌙", title:"睡眠与恢复", content:"睡眠不足使皮质醇升高，抑制脂肪分解，增加暴食欲望。7–9小时优质睡眠是减脂的隐藏利器。" },
-              { icon:"📏", title:"衡量进展", content:"不要只看体重！拍照对比、量围度（腰/臀/手臂）、感受体力变化，这些往往比体重更能反映真实进步。" },
-            ].map((tip, i) => (
-              <div key={i} className="card" style={{ padding:"16px", marginBottom:10 }}>
-                <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-                  <span style={{ fontSize:22, flexShrink:0 }}>{tip.icon}</span>
-                  <div>
-                    <p style={{ fontSize:14, fontWeight:700, color:"#ffb6ff", marginBottom:6 }}>{tip.title}</p>
-                    <p style={{ fontSize:13, color:"rgba(255,255,255,0.55)", lineHeight:1.7 }}>{tip.content}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

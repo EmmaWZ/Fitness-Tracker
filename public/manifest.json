@@ -1,0 +1,8 @@
+{
+  "short_name": "健身Tracker",
+  "name": "减脂塑形健身追踪器",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0a0a0f",
+  "background_color": "#0a0a0f"
+}

@@ -71,7 +71,6 @@ export default function FitnessTracker() {
   const todayKey  = today.toISOString().split("T")[0];
   const weekKey   = getWeekKey(today);
   const todayIdx  = JS_TO_IDX[today.getDay()];
-  const todayPlan = weeklyPlan[todayIdx];
 
   // ── Persistent state ──────────────────────────────────────────────────────
   const [defaultTasks, setDefaultTasks] = useState(() => {
@@ -99,6 +98,7 @@ export default function FitnessTracker() {
   useEffect(() => { try { localStorage.setItem("fit_weekly_plan",   JSON.stringify(weeklyPlan));     } catch {} }, [weeklyPlan]);
 
   // ── Derived values ────────────────────────────────────────────────────────
+  const todayPlan    = weeklyPlan[todayIdx];
   const todayExtras  = extraTasksByDay[todayKey] || [];
   const todayChecked = checkedByDay[todayKey]    || {};
   const allTodayTasks = [...defaultTasks, ...todayExtras];

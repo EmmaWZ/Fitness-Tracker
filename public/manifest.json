@@ -1,12 +1,14 @@
 {
   "short_name": "美女养成",
-  "name": "美女养成计划 · 健身Tracker",
+  "name": "美女养成计划",
+  "description": "减脂塑形 · 富婆养成 · 每日打卡",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "theme_color": "#ffeef6",
   "background_color": "#fff8fb",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

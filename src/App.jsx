@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, memo } from "react";
-import { DEFAULT_REMINDERS, requestPermission, scheduleAll, fireNotification, getNextTriggerMs } from "./useNotifications";
+import { DEFAULT_REMINDERS, requestPermission, scheduleAll, fireNotification } from "./useNotifications";
 import { loadData, saveData } from "./supabase";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -98,7 +98,6 @@ function TaskForm({ task, onSave, onCancel, onDelete, title }) {
     </div>
   );
 }
-
 function GoalForm({ goal, onSave, onCancel }) {
   const [d, setD] = useState({...goal});
   return (
@@ -120,7 +119,6 @@ function GoalForm({ goal, onSave, onCancel }) {
     </div>
   );
 }
-
 function WeekDayForm({ plan, onSave, onCancel }) {
   const [d, setD] = useState({...plan});
   return (
@@ -137,8 +135,24 @@ function WeekDayForm({ plan, onSave, onCancel }) {
     </div>
   );
 }
-
-// ── Reusable task row ────────────────────────────────────────────────────────
+function ReminderEditForm({ reminder, onSave, onCancel }) {
+  const [d, setD] = useState({...reminder});
+  return (
+    <div className="edit-form" style={{marginBottom:10}}>
+      <div style={{fontSize:12,fontWeight:900,color:"#b060a0",marginBottom:10}}>{d.label} · 编辑提醒</div>
+      <label className="flbl">提醒名称</label>
+      <input className="finput" value={d.label} onChange={e=>setD(p=>({...p,label:e.target.value}))} placeholder="例如：早起打卡"/>
+      <label className="flbl">提醒时间</label>
+      <input className="finput" type="time" value={d.time} onChange={e=>setD(p=>({...p,time:e.target.value}))}/>
+      <label className="flbl">提醒内容</label>
+      <input className="finput" value={d.message} onChange={e=>setD(p=>({...p,message:e.target.value}))} placeholder="提醒文案"/>
+      <div style={{display:"flex",gap:8,marginTop:14}}>
+        <button className="save-btn" onClick={()=>onSave(d)}>保存</button>
+        <button className="can-btn" onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  );
+}
 function TaskRow({ task, checked, onToggle, onEdit, expanded, onExpand, badge }) {
   return (
     <div className={`task-row ${checked?"done":""}`} onClick={onExpand}>
@@ -166,51 +180,66 @@ export default function FitnessTracker() {
   const weekKey  = getWeekKey(today);
   const todayIdx = JS_TO_IDX[today.getDay()];
 
+  // ── ALL state declarations first ──────────────────────────────────────────
   const [defaultTasks,    setDefaultTasks]    = useState(()=>{ try{const s=localStorage.getItem("fit_default_tasks"); return s?JSON.parse(s):DEFAULT_TASKS;}catch{return DEFAULT_TASKS;} });
-  const [extraTasksByDay, setExtraTasksByDay] = useState(()=>{ try{const s=localStorage.getItem("fit_extra_tasks");   return s?JSON.parse(s):{};}          catch{return {};} });
-  const [checkedByDay, setCheckedByDay] = useState(() => {
+  const [extraTasksByDay, setExtraTasksByDay] = useState(()=>{ try{const s=localStorage.getItem("fit_extra_tasks");   return s?JSON.parse(s):{};}catch{return {};} });
+  const [checkedByDay,    setCheckedByDay]    = useState(()=>{
     try {
-      // Read per-day keys (fit_YYYY-MM-DD) for the past 14 days
       const result = {};
       const base = new Date();
-      for (let i = 0; i < 14; i++) {
-        const d = new Date(base);
-        d.setDate(base.getDate() - i);
-        const key = d.toISOString().split("T")[0];
-        const s = localStorage.getItem(`fit_day_${key}`);
-        if (s) result[key] = JSON.parse(s);
+      for (let i=0; i<14; i++) {
+        const d = new Date(base); d.setDate(base.getDate()-i);
+        const k = d.toISOString().split("T")[0];
+        const s = localStorage.getItem(`fit_day_${k}`);
+        if (s) result[k] = JSON.parse(s);
       }
       return result;
     } catch { return {}; }
   });
-  const [goal,            setGoal]            = useState(()=>{ try{const s=localStorage.getItem("fit_goal");          return s?JSON.parse(s):DEFAULT_GOAL;}catch{return DEFAULT_GOAL;} });
-  const [weeklyPlan,      setWeeklyPlan]      = useState(()=>{ try{const s=localStorage.getItem("fit_weekly_plan");   return s?JSON.parse(s):DEFAULT_WEEKLY_PLAN;}catch{return DEFAULT_WEEKLY_PLAN;} });
+  const [goal,       setGoal]       = useState(()=>{ try{const s=localStorage.getItem("fit_goal");        return s?JSON.parse(s):DEFAULT_GOAL;}catch{return DEFAULT_GOAL;} });
+  const [weeklyPlan, setWeeklyPlan] = useState(()=>{ try{const s=localStorage.getItem("fit_weekly_plan"); return s?JSON.parse(s):DEFAULT_WEEKLY_PLAN;}catch{return DEFAULT_WEEKLY_PLAN;} });
+  const [reminders,  setReminders]  = useState(()=>{ try{const s=localStorage.getItem("fit_reminders");   return s?JSON.parse(s):DEFAULT_REMINDERS;}catch{return DEFAULT_REMINDERS;} });
+  const [permission, setPermission] = useState(typeof Notification!=="undefined" ? Notification.permission : "unsupported");
+  // Cloud sync
+  const [userId,      setUserId]      = useState(()=> localStorage.getItem("fit_user_id") || "");
+  const [userIdInput, setUserIdInput] = useState("");
+  const [syncing,     setSyncing]     = useState(false);
+  const [syncStatus,  setSyncStatus]  = useState(null);
+  const saveTimer = useRef(null);
+  // UI
+  const [tab,              setTab]              = useState("today");
+  const [expanded,         setExpanded]         = useState(null);
+  const [editingGoal,      setEditingGoal]      = useState(false);
+  const [editingWeekDay,   setEditingWeekDay]   = useState(null);
+  const [editingFixed,     setEditingFixed]     = useState(null);
+  const [addingFixed,      setAddingFixed]      = useState(null);
+  const [managingDefaults, setManagingDefaults] = useState(false);
+  const [editingDefault,   setEditingDefault]   = useState(null);
+  const [addingDefault,    setAddingDefault]    = useState(false);
+  const [editingExtra,     setEditingExtra]     = useState(null);
+  const [addingExtra,      setAddingExtra]      = useState(false);
+  const [editingReminder,  setEditingReminder]  = useState(null);
+  const [streak] = useState(7);
 
+  // ── Effects ───────────────────────────────────────────────────────────────
+  // localStorage persist
   useEffect(()=>{ try{localStorage.setItem("fit_default_tasks",JSON.stringify(defaultTasks));}catch{} },[defaultTasks]);
   useEffect(()=>{ try{localStorage.setItem("fit_extra_tasks",  JSON.stringify(extraTasksByDay));}catch{} },[extraTasksByDay]);
-  // Persist today's checked state to its own key whenever it changes
-  const todayCheckedForPersist = checkedByDay[todayKey];
-  useEffect(() => {
-    try {
-      if (todayCheckedForPersist) {
-        localStorage.setItem(`fit_day_${todayKey}`, JSON.stringify(todayCheckedForPersist));
-      }
-    } catch {}
-  }, [todayCheckedForPersist, todayKey]);
   useEffect(()=>{ try{localStorage.setItem("fit_goal",         JSON.stringify(goal));}catch{} },[goal]);
   useEffect(()=>{ try{localStorage.setItem("fit_weekly_plan",  JSON.stringify(weeklyPlan));}catch{} },[weeklyPlan]);
+  useEffect(()=>{ try{localStorage.setItem("fit_reminders",    JSON.stringify(reminders));}catch{} },[reminders]);
+  useEffect(()=>{ scheduleAll(reminders); },[reminders, permission]);
 
-  // ── Cloud sync ─────────────────────────────────────────────────────────────
-  const [userId,       setUserId]       = useState(() => localStorage.getItem("fit_user_id") || "");
-  const [userIdInput,  setUserIdInput]  = useState("");
-  const [syncing,      setSyncing]      = useState(false);
-  const [syncStatus,   setSyncStatus]   = useState(null); // "ok" | "error" | null
-  const saveTimer = useRef(null);
+  const todayCheckedForPersist = checkedByDay[todayKey];
+  useEffect(()=>{
+    try { if(todayCheckedForPersist) localStorage.setItem(`fit_day_${todayKey}`, JSON.stringify(todayCheckedForPersist)); } catch {}
+  },[todayCheckedForPersist, todayKey]);
 
-  useEffect(() => {
+  // Cloud: load on mount
+  useEffect(()=>{
     if (!userId) return;
     setSyncing(true);
-    loadData(userId).then(data => {
+    loadData(userId).then(data=>{
       if (data) {
         if (data.defaultTasks)    setDefaultTasks(data.defaultTasks);
         if (data.extraTasksByDay) setExtraTasksByDay(data.extraTasksByDay);
@@ -219,28 +248,26 @@ export default function FitnessTracker() {
         if (data.reminders)       setReminders(data.reminders);
         if (data.checkedByDay) {
           setCheckedByDay(data.checkedByDay);
-          Object.entries(data.checkedByDay).forEach(([k,v]) => {
-            try { localStorage.setItem(`fit_day_${k}`, JSON.stringify(v)); } catch {}
-          });
+          Object.entries(data.checkedByDay).forEach(([k,v])=>{ try{localStorage.setItem(`fit_day_${k}`,JSON.stringify(v));}catch{} });
         }
         setSyncStatus("ok");
       }
       setSyncing(false);
-    }).catch(() => { setSyncing(false); setSyncStatus("error"); });
+    }).catch(()=>{ setSyncing(false); setSyncStatus("error"); });
   }, [userId]);
 
-  const saveTimer_cb = useCallback(() => {
+  // Cloud: auto-save 2s after changes
+  const doCloudSave = useCallback(()=>{
     if (!userId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveData(userId, { defaultTasks, extraTasksByDay, goal, weeklyPlan, reminders, checkedByDay })
-        .then(ok => setSyncStatus(ok ? "ok" : "error"));
+    saveTimer.current = setTimeout(()=>{
+      saveData(userId,{defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay})
+        .then(ok=>setSyncStatus(ok?"ok":"error"));
     }, 2000);
-  }, [userId, defaultTasks, extraTasksByDay, goal, weeklyPlan, reminders, checkedByDay]);
+  },[userId,defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay]);
+  useEffect(()=>{ doCloudSave(); },[doCloudSave]);
 
-  useEffect(() => { saveTimer_cb(); }, [saveTimer_cb]);
-
-  const handleSetUserId = () => {
+  const handleSetUserId = ()=>{
     const id = userIdInput.trim();
     if (!id) return;
     localStorage.setItem("fit_user_id", id);
@@ -248,13 +275,12 @@ export default function FitnessTracker() {
     setSyncStatus(null);
   };
 
-
-  // Derived
-  const todayPlan      = weeklyPlan[todayIdx];
-  const todayFixed     = (todayPlan.fixedTasks || []);        // weekly recurring tasks for today
-  const todayExtras    = extraTasksByDay[todayKey] || [];     // one-off extras for today
-  const todayChecked   = checkedByDay[todayKey] || {};
-  const allTodayTasks  = [...defaultTasks, ...todayFixed, ...todayExtras];
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const todayPlan     = weeklyPlan[todayIdx];
+  const todayFixed    = todayPlan.fixedTasks || [];
+  const todayExtras   = extraTasksByDay[todayKey] || [];
+  const todayChecked  = checkedByDay[todayKey] || {};
+  const allTodayTasks = [...defaultTasks, ...todayFixed, ...todayExtras];
 
   const completedCount = allTodayTasks.filter(t=>todayChecked[t.id]).length;
   const totalXP        = allTodayTasks.filter(t=>todayChecked[t.id]).reduce((s,t)=>s+(t.xp||0),0);
@@ -262,50 +288,27 @@ export default function FitnessTracker() {
   const progress       = allTodayTasks.length>0 ? Math.round((completedCount/allTodayTasks.length)*100) : 0;
 
   const weekDates = getWeekDates(weekKey);
-  const weekStats = weekDates.map(ds=>{ try{ const dc=checkedByDay[ds]; if(!dc) return null; const idx=JS_TO_IDX[new Date(ds+"T00:00:00").getDay()]; const fx=(weeklyPlan[idx]?.fixedTasks||[]).length; const ex=(extraTasksByDay[ds]||[]).length; const tot=defaultTasks.length+fx+ex; const done=Object.values(dc).filter(Boolean).length; return tot>0?Math.round((done/tot)*100):0; }catch{return null;} });
+  const weekStats = weekDates.map(ds=>{
+    try {
+      const dc=checkedByDay[ds]; if(!dc) return null;
+      const idx=JS_TO_IDX[new Date(ds+"T00:00:00").getDay()];
+      const fx=(weeklyPlan[idx]?.fixedTasks||[]).length;
+      const ex=(extraTasksByDay[ds]||[]).length;
+      const tot=defaultTasks.length+fx+ex;
+      const done=Object.values(dc).filter(Boolean).length;
+      return tot>0?Math.round((done/tot)*100):0;
+    } catch { return null; }
+  });
   const weekCompletedDays = weekStats.filter(v=>v!==null&&v>=100).length;
   const weekAvgPct = (()=>{ const v=weekStats.filter(v=>v!==null); return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):0; })();
 
-  // UI state
-  const [tab,            setTab]            = useState("today");
-  const [expanded,       setExpanded]       = useState(null);
-  const [editingGoal,    setEditingGoal]    = useState(false);
-  const [editingWeekDay, setEditingWeekDay] = useState(null);
-  // per-day fixed task editing (in week tab)
-  const [editingFixed,   setEditingFixed]   = useState(null); // {dayIdx, taskId}
-  const [addingFixed,    setAddingFixed]    = useState(null); // dayIdx
-  // default task management
-  const [managingDefaults, setManagingDefaults] = useState(false);
-  const [editingDefault,   setEditingDefault]   = useState(null); // taskId
-  const [addingDefault,    setAddingDefault]    = useState(false);
-  // today extras
-  const [editingExtra,  setEditingExtra]  = useState(null);
-  const [addingExtra,   setAddingExtra]   = useState(false);
-  const [streak] = useState(7);
-
-  // Reminders
-  const [reminders, setReminders] = useState(() => { try { const s = localStorage.getItem("fit_reminders"); return s ? JSON.parse(s) : DEFAULT_REMINDERS; } catch { return DEFAULT_REMINDERS; } });
-  const [permission, setPermission] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
-  const [editingReminder, setEditingReminder] = useState(null);
-
-  useEffect(() => { try { localStorage.setItem("fit_reminders", JSON.stringify(reminders)); } catch {} }, [reminders]);
-  useEffect(() => { scheduleAll(reminders); }, [reminders, permission]);
-
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const toggle = id => setCheckedByDay(p=>({...p,[todayKey]:{...(p[todayKey]||{}),[id]:!(p[todayKey]?.[id])}}));
-
-  // Default task reorder
-  const moveDefault = (idx, dir) => {
-    setDefaultTasks(ts => {
-      const a = [...ts];
-      const to = idx + dir;
-      if (to < 0 || to >= a.length) return a;
-      [a[idx], a[to]] = [a[to], a[idx]];
-      return a;
-    });
-  };
+  const moveDefault = (idx, dir) => setDefaultTasks(ts=>{ const a=[...ts]; const to=idx+dir; if(to<0||to>=a.length) return a; [a[idx],a[to]]=[a[to],a[idx]]; return a; });
 
   const glass = { background:"rgba(255,255,255,0.55)", backdropFilter:"blur(16px)", WebkitBackdropFilter:"blur(16px)", border:"1px solid rgba(255,200,230,0.45)", borderRadius:22 };
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{minHeight:"100vh",fontFamily:"'Nunito',sans-serif",color:"#3a003a",position:"relative",overflow:"hidden",background:"linear-gradient(160deg,#fff8fb 0%,#ffeef6 20%,#fff3f9 40%,#fdf0ff 65%,#fff6fc 100%)"}}>
       <style>{`
@@ -338,8 +341,7 @@ export default function FitnessTracker() {
         .section-label{font-size:11px;font-weight:900;color:#b060a0;letter-spacing:.08em;text-transform:uppercase;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
         .section-label::after{content:'';flex:1;height:1px;background:rgba(217,70,168,0.15)}
         .add-dashed{width:100%;padding:12px;border-radius:16px;border:2px dashed rgba(255,190,220,0.5);background:rgba(255,255,255,0.35);color:#c068a0;font-family:'Nunito',sans-serif;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s;margin-top:4px}
-        .add-dashed:hover{background:rgba(255,220,240,0.4)}
-        .add-dashed.yellow{border-color:rgba(255,210,100,0.5);color:#b08000;background:rgba(255,255,255,0.35)}
+        .add-dashed.yellow{border-color:rgba(255,210,100,0.5);color:#b08000}
         .wk-day{background:rgba(255,255,255,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,190,220,0.4);border-radius:18px;padding:14px 16px;margin-bottom:9px}
         .wk-day.today-day{background:rgba(255,228,245,0.7);border:1.5px solid rgba(217,70,168,0.3)}
         .wk-day.future-day{opacity:.6}
@@ -356,33 +358,30 @@ export default function FitnessTracker() {
 
       <div style={{maxWidth:480,margin:"0 auto",padding:"24px 16px 72px",position:"relative",zIndex:2}}>
 
-        {/* ── SYNC STATUS BAR ── */}
+        {/* ── SYNC BAR ── */}
         {!userId ? (
-          <div style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",border:"1px solid rgba(255,190,220,0.4)",borderRadius:18,padding:"14px 16px",marginBottom:14,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-            <span style={{fontSize:20}}>☁️</span>
-            <div style={{flex:1,minWidth:180}}>
-              <div style={{fontSize:13,fontWeight:900,color:"#5a006a",marginBottom:4}}>设置同步昵称</div>
-              <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>设置后可跨设备同步数据</div>
+          <div style={{...glass,padding:"16px",marginBottom:14}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <span style={{fontSize:22}}>☁️</span>
+              <div>
+                <div style={{fontSize:13,fontWeight:900,color:"#5a006a"}}>设置同步昵称</div>
+                <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>设置后可跨设备同步数据</div>
+              </div>
             </div>
-            <input
-              style={{background:"rgba(255,255,255,0.7)",border:"1.5px solid rgba(240,180,220,0.6)",borderRadius:10,color:"#4a0060",padding:"7px 10px",fontSize:13,fontFamily:"'Nunito',sans-serif",fontWeight:700,outline:"none",width:"100%",marginTop:6}}
-              placeholder="输入你的昵称，例如：emma"
-              value={userIdInput}
-              onChange={e=>setUserIdInput(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&handleSetUserId()}
-            />
-            <button className="save-btn" style={{width:"100%",marginTop:6}} onClick={handleSetUserId}>开启云同步</button>
+            <input className="finput" placeholder="输入你的昵称，例如：emma" value={userIdInput}
+              onChange={e=>setUserIdInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSetUserId()}
+              style={{marginBottom:8}}/>
+            <button className="save-btn" style={{width:"100%"}} onClick={handleSetUserId}>开启云同步</button>
           </div>
         ) : (
           <div style={{background:"rgba(255,255,255,0.55)",border:"1px solid rgba(255,190,220,0.35)",borderRadius:14,padding:"8px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:14}}>{syncing ? "🔄" : syncStatus==="ok" ? "☁️✅" : syncStatus==="error" ? "⚠️" : "☁️"}</span>
+            <span style={{fontSize:14}}>{syncing?"🔄":syncStatus==="ok"?"☁️✅":syncStatus==="error"?"⚠️":"☁️"}</span>
             <span style={{fontSize:12,fontWeight:800,color:"#7a007a",flex:1}}>
-              {syncing ? "同步中…" : syncStatus==="ok" ? `已同步 · ${userId}` : syncStatus==="error" ? "同步失败，检查网络" : `已连接 · ${userId}`}
+              {syncing?"同步中…":syncStatus==="ok"?`已同步 · ${userId}`:syncStatus==="error"?"同步失败，检查网络":`已连接 · ${userId}`}
             </span>
-            <button className="edt-btn" onClick={()=>{ localStorage.removeItem("fit_user_id"); setUserId(""); setUserIdInput(""); setSyncStatus(null); }}>切换</button>
+            <button className="edt-btn" onClick={()=>{localStorage.removeItem("fit_user_id");setUserId("");setUserIdInput("");setSyncStatus(null);}}>切换</button>
           </div>
         )}
-
 
         {/* ── HEADER ── */}
         <div style={{...glass,padding:"22px 20px 20px",marginBottom:14,position:"relative",overflow:"hidden"}} className="fu">
@@ -440,82 +439,63 @@ export default function FitnessTracker() {
           ))}
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
-            TODAY TAB
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* ══ TODAY ══ */}
         {tab==="today" && (
           <div className="fu">
-
-            {/* Every-day tasks */}
             <div className="section-label">
               每日必做 · {defaultTasks.length} 项
               <button className="edt-btn" onClick={()=>{setManagingDefaults(v=>!v);setEditingDefault(null);setAddingDefault(false);}}>
-                {managingDefaults ? "完成" : "管理"}
+                {managingDefaults?"完成":"管理"}
               </button>
             </div>
-
             {managingDefaults ? (
-              // ── MANAGE MODE ──
               <div>
                 {defaultTasks.map((task,idx)=>(
-                  editingDefault===task.id ? (
-                    <TaskForm key={task.id} task={task}
-                      onSave={d=>{setDefaultTasks(ts=>ts.map(t=>t.id===task.id?{...t,...d}:t));setEditingDefault(null);}}
-                      onCancel={()=>setEditingDefault(null)}
-                      onDelete={()=>{setDefaultTasks(ts=>ts.filter(t=>t.id!==task.id));setEditingDefault(null);}}
-                    />
-                  ) : (
-                    <div key={task.id} className="manage-row">
-                      {/* reorder arrows */}
-                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                        <button className="icon-btn" onClick={()=>moveDefault(idx,-1)} disabled={idx===0} style={{opacity:idx===0?.3:1}}>↑</button>
-                        <button className="icon-btn" onClick={()=>moveDefault(idx,+1)} disabled={idx===defaultTasks.length-1} style={{opacity:idx===defaultTasks.length-1?.3:1}}>↓</button>
+                  editingDefault===task.id
+                    ? <TaskForm key={task.id} task={task}
+                        onSave={d=>{setDefaultTasks(ts=>ts.map(t=>t.id===task.id?{...t,...d}:t));setEditingDefault(null);}}
+                        onCancel={()=>setEditingDefault(null)}
+                        onDelete={()=>{setDefaultTasks(ts=>ts.filter(t=>t.id!==task.id));setEditingDefault(null);}}
+                      />
+                    : <div key={task.id} className="manage-row">
+                        <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                          <button className="icon-btn" onClick={()=>moveDefault(idx,-1)} disabled={idx===0} style={{opacity:idx===0?.3:1}}>↑</button>
+                          <button className="icon-btn" onClick={()=>moveDefault(idx,+1)} disabled={idx===defaultTasks.length-1} style={{opacity:idx===defaultTasks.length-1?.3:1}}>↓</button>
+                        </div>
+                        <div style={{fontSize:20}}>{task.icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:800,color:"#5a006a"}}>{task.title}</div>
+                          <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>{task.category} · {task.duration}</div>
+                        </div>
+                        <button className="edt-btn" onClick={()=>setEditingDefault(task.id)}>编辑</button>
+                        <button className="icon-btn" style={{color:"#e05080",borderColor:"rgba(255,160,180,0.4)"}} onClick={()=>setDefaultTasks(ts=>ts.filter(t=>t.id!==task.id))}>✕</button>
                       </div>
-                      <div style={{fontSize:20}}>{task.icon}</div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:800,color:"#5a006a"}}>{task.title}</div>
-                        <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>{task.category} · {task.duration}</div>
-                      </div>
-                      <button className="edt-btn" onClick={()=>setEditingDefault(task.id)}>编辑</button>
-                      <button className="icon-btn" style={{color:"#e05080",borderColor:"rgba(255,160,180,0.4)"}} onClick={()=>setDefaultTasks(ts=>ts.filter(t=>t.id!==task.id))}>✕</button>
-                    </div>
-                  )
                 ))}
                 {addingDefault
-                  ? <TaskForm
-                      task={{id:genId(),icon:"✨",title:"",category:"",description:"",duration:"",tip:"",xp:20}}
-                      title="＋ 新增每日必做"
+                  ? <TaskForm task={{id:genId(),icon:"✨",title:"",category:"",description:"",duration:"",tip:"",xp:20}} title="＋ 新增每日必做"
                       onSave={d=>{setDefaultTasks(ts=>[...ts,{...d,id:genId()}]);setAddingDefault(false);}}
-                      onCancel={()=>setAddingDefault(false)}
-                    />
+                      onCancel={()=>setAddingDefault(false)}/>
                   : <button className="add-dashed" onClick={()=>setAddingDefault(true)}>＋ 新增每日必做任务</button>
                 }
               </div>
             ) : (
-              // ── NORMAL VIEW ──
               defaultTasks.map(task=>(
                 <TaskRow key={task.id} task={task} checked={!!todayChecked[task.id]}
-                  onToggle={()=>toggle(task.id)}
-                  expanded={expanded===task.id}
-                  onExpand={()=>setExpanded(expanded===task.id?null:task.id)}
-                />
+                  onToggle={()=>toggle(task.id)} expanded={expanded===task.id}
+                  onExpand={()=>setExpanded(expanded===task.id?null:task.id)}/>
               ))
             )}
 
-            {/* Weekly fixed tasks for today */}
-            {todayFixed.length > 0 && <>
+            {todayFixed.length>0 && <>
               <div className="section-label">本周固定 · {todayPlan.day}</div>
               {todayFixed.map(task=>(
                 <TaskRow key={task.id} task={task} checked={!!todayChecked[task.id]}
-                  onToggle={()=>toggle(task.id)}
-                  expanded={expanded===task.id}
+                  onToggle={()=>toggle(task.id)} expanded={expanded===task.id}
                   onExpand={()=>setExpanded(expanded===task.id?null:task.id)}
-                  badge={<span className="badge-fixed">📅 本周固定</span>}
-                />
+                  badge={<span className="badge-fixed">📅 本周固定</span>}/>
               ))}
             </>}
 
-            {/* Today extras */}
             <div className="section-label">
               今日专属 · {todayKey}
               {todayExtras.length>0&&<span style={{fontSize:10,color:"#c068a0",fontWeight:700}}>{todayExtras.length} 项</span>}
@@ -528,31 +508,22 @@ export default function FitnessTracker() {
                 ? <TaskForm key={task.id} task={task}
                     onSave={d=>{setExtraTasksByDay(p=>({...p,[todayKey]:(p[todayKey]||[]).map(t=>t.id===task.id?{...t,...d}:t)}));setEditingExtra(null);}}
                     onCancel={()=>setEditingExtra(null)}
-                    onDelete={()=>{setExtraTasksByDay(p=>({...p,[todayKey]:(p[todayKey]||[]).filter(t=>t.id!==task.id)}));setCheckedByDay(p=>{const d={...(p[todayKey]||{})};delete d[task.id];return{...p,[todayKey]:d};});setEditingExtra(null);}}
-                  />
+                    onDelete={()=>{setExtraTasksByDay(p=>({...p,[todayKey]:(p[todayKey]||[]).filter(t=>t.id!==task.id)}));setCheckedByDay(p=>{const d={...(p[todayKey]||{})};delete d[task.id];return{...p,[todayKey]:d};});setEditingExtra(null);}}/>
                 : <TaskRow key={task.id} task={task} checked={!!todayChecked[task.id]}
-                    onToggle={()=>toggle(task.id)}
-                    onEdit={()=>setEditingExtra(task.id)}
-                    expanded={expanded===task.id}
-                    onExpand={()=>setExpanded(expanded===task.id?null:task.id)}
-                    badge={<span className="badge-extra">✨ 今日专属</span>}
-                  />
+                    onToggle={()=>toggle(task.id)} onEdit={()=>setEditingExtra(task.id)}
+                    expanded={expanded===task.id} onExpand={()=>setExpanded(expanded===task.id?null:task.id)}
+                    badge={<span className="badge-extra">✨ 今日专属</span>}/>
             ))}
             {addingExtra
-              ? <TaskForm
-                  task={{id:genId(),icon:"✨",title:"",category:"今日专属",description:"",duration:"",tip:"",xp:15}}
-                  title="✨ 添加今日专属任务"
+              ? <TaskForm task={{id:genId(),icon:"✨",title:"",category:"今日专属",description:"",duration:"",tip:"",xp:15}} title="✨ 添加今日专属任务"
                   onSave={d=>{setExtraTasksByDay(p=>({...p,[todayKey]:[...(p[todayKey]||[]),{...d,id:genId()}]}));setAddingExtra(false);}}
-                  onCancel={()=>setAddingExtra(false)}
-                />
+                  onCancel={()=>setAddingExtra(false)}/>
               : <button className="add-dashed yellow" onClick={()=>setAddingExtra(true)}>＋ 添加今日专属任务</button>
             }
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════
-            WEEK TAB
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* ══ WEEK ══ */}
         {tab==="week" && (
           <div className="fu">
             <div style={{fontSize:12,fontWeight:900,color:"#b060a0",letterSpacing:".08em",textTransform:"uppercase",marginBottom:12}}>本周打卡总览</div>
@@ -565,16 +536,13 @@ export default function FitnessTracker() {
                 </div>
               ))}
             </div>
-
             <div style={{fontSize:12,fontWeight:900,color:"#b060a0",letterSpacing:".08em",textTransform:"uppercase",marginBottom:12}}>每日安排 &amp; 固定任务</div>
-
             {weeklyPlan.map((plan,i)=>{
               const pct=weekStats[i]; const isToday=i===todayIdx; const isFuture=i>todayIdx; const isPerfect=pct!==null&&pct>=100;
               const dayExtras=(extraTasksByDay[weekDates[i]]||[]).length;
               const fixedCount=(plan.fixedTasks||[]).length;
               return (
                 <div key={i} className={`wk-day ${isToday?"today-day":""} ${isFuture?"future-day":""}`}>
-                  {/* Day header */}
                   <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                     <span style={{fontSize:22}}>{plan.emoji}</span>
                     <div style={{flex:1}}>
@@ -586,35 +554,25 @@ export default function FitnessTracker() {
                       </div>
                       <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>{plan.focus}</div>
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
-                      <span style={{fontSize:12,fontWeight:900,color:isPerfect?"#059669":"#9b28bf"}}>
-                        {pct!==null?(isPerfect?"✓ 100%":`${pct}%`):(isFuture?"—":"未记录")}
-                      </span>
-                    </div>
+                    <span style={{fontSize:12,fontWeight:900,color:isPerfect?"#059669":"#9b28bf",flexShrink:0}}>
+                      {pct!==null?(isPerfect?"✓ 100%":`${pct}%`):(isFuture?"—":"未记录")}
+                    </span>
                   </div>
-
-                  {/* Progress bar */}
                   <div style={{height:7,background:"rgba(240,200,230,0.5)",borderRadius:4,overflow:"hidden",marginBottom:10}}>
                     <div style={{height:"100%",borderRadius:4,transition:"width .5s",background:isPerfect?"linear-gradient(90deg,#6ee7b7,#10b981)":"linear-gradient(90deg,#f9a8d4,#d946a8)",width:pct!==null?`${pct}%`:"0%"}}/>
                   </div>
-
-                  {/* Edit schedule button */}
                   {editingWeekDay===i
                     ? <WeekDayForm plan={plan}
                         onSave={d=>{setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,...d}:x));setEditingWeekDay(null);}}
-                        onCancel={()=>setEditingWeekDay(null)}
-                      />
-                    : <button className="edt-btn" style={{marginBottom:fixedCount>0||addingFixed===i?10:0}} onClick={()=>setEditingWeekDay(i)}>编辑安排</button>
+                        onCancel={()=>setEditingWeekDay(null)}/>
+                    : <button className="edt-btn" style={{marginBottom:8}} onClick={()=>setEditingWeekDay(i)}>编辑安排</button>
                   }
-
-                  {/* Fixed tasks list */}
                   {(plan.fixedTasks||[]).map(task=>(
-                    editingFixed?.dayIdx===i && editingFixed?.taskId===task.id
+                    editingFixed?.dayIdx===i&&editingFixed?.taskId===task.id
                       ? <TaskForm key={task.id} task={task}
                           onSave={d=>{setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,fixedTasks:(x.fixedTasks||[]).map(t=>t.id===task.id?{...t,...d}:t)}:x));setEditingFixed(null);}}
                           onCancel={()=>setEditingFixed(null)}
-                          onDelete={()=>{setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,fixedTasks:(x.fixedTasks||[]).filter(t=>t.id!==task.id)}:x));setEditingFixed(null);}}
-                        />
+                          onDelete={()=>{setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,fixedTasks:(x.fixedTasks||[]).filter(t=>t.id!==task.id)}:x));setEditingFixed(null);}}/>
                       : <div key={task.id} className="fixed-task-chip">
                           <span style={{fontSize:16}}>{task.icon}</span>
                           <span style={{flex:1}}>{task.title}{task.duration?` · ${task.duration}`:""}</span>
@@ -622,18 +580,12 @@ export default function FitnessTracker() {
                           <button className="icon-btn" style={{fontSize:11,padding:"2px 6px",color:"#e05080",borderColor:"rgba(255,160,180,0.4)"}} onClick={()=>setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,fixedTasks:(x.fixedTasks||[]).filter(t=>t.id!==task.id)}:x))}>✕</button>
                         </div>
                   ))}
-
-                  {/* Add fixed task */}
                   {addingFixed===i
-                    ? <TaskForm
-                        task={{id:genId(),icon:"📅",title:"",category:"本周固定",description:"",duration:"",tip:"",xp:20}}
-                        title={`${plan.day} · 添加固定任务`}
+                    ? <TaskForm task={{id:genId(),icon:"📅",title:"",category:"本周固定",description:"",duration:"",tip:"",xp:20}} title={`${plan.day} · 添加固定任务`}
                         onSave={d=>{setWeeklyPlan(p=>p.map((x,j)=>j===i?{...x,fixedTasks:[...(x.fixedTasks||[]),{...d,id:genId()}]}:x));setAddingFixed(null);}}
-                        onCancel={()=>setAddingFixed(null)}
-                      />
+                        onCancel={()=>setAddingFixed(null)}/>
                     : <button className="add-dashed" style={{marginTop:8,fontSize:11,padding:"8px"}} onClick={()=>{setAddingFixed(i);setEditingFixed(null);}}>＋ 添加 {plan.day} 固定任务</button>
                   }
-
                   {isToday&&pct!==null&&!isPerfect&&<div style={{fontSize:11,color:"#c060a0",fontWeight:700,marginTop:8}}>还差 {allTodayTasks.length-Math.round(pct*allTodayTasks.length/100)} 项，加油！✨</div>}
                   {isPerfect&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700,marginTop:8}}>🌟 完美完成！</div>}
                 </div>
@@ -642,9 +594,7 @@ export default function FitnessTracker() {
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════
-            TIPS TAB
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* ══ TIPS ══ */}
         {tab==="tips" && (
           <div className="fu">
             {TIPS.map((tip,i)=>(
@@ -659,107 +609,62 @@ export default function FitnessTracker() {
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════
-            REMINDERS TAB
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* ══ REMINDERS ══ */}
         {tab==="reminders" && (
           <div className="fu">
-
-            {/* Permission banner */}
-            {permission !== "granted" && (
+            {permission!=="granted" && (
               <div style={{background:"rgba(255,220,240,0.7)",border:"1.5px solid rgba(217,70,168,0.3)",borderRadius:18,padding:"16px",marginBottom:16,textAlign:"center"}}>
                 <div style={{fontSize:22,marginBottom:6}}>🔔</div>
                 <div style={{fontSize:13,fontWeight:800,color:"#7a0070",marginBottom:4}}>
-                  {permission==="denied" ? "通知权限已被拒绝" : "开启通知权限"}
+                  {permission==="denied"?"通知权限已被拒绝":"开启通知权限"}
                 </div>
                 <div style={{fontSize:12,color:"#b060a0",fontWeight:700,marginBottom:12,lineHeight:1.6}}>
-                  {permission==="denied"
-                    ? "请到手机设置 → Chrome → 通知，手动开启权限"
-                    : "允许通知后，即可在指定时间收到健身提醒"}
+                  {permission==="denied"?"请到手机设置 → Chrome → 通知，手动开启权限":"允许通知后，即可在指定时间收到健身提醒"}
                 </div>
-                {permission !== "denied" && (
-                  <button className="save-btn" onClick={async()=>{
-                    const p = await requestPermission();
-                    setPermission(p);
-                    if (p==="granted") scheduleAll(reminders);
-                  }}>允许通知</button>
+                {permission!=="denied"&&(
+                  <button className="save-btn" onClick={async()=>{ const p=await requestPermission(); setPermission(p); if(p==="granted") scheduleAll(reminders); }}>允许通知</button>
                 )}
               </div>
             )}
-
-            {permission==="granted" && (
+            {permission==="granted"&&(
               <div style={{background:"rgba(220,255,220,0.6)",border:"1px solid rgba(100,200,100,0.4)",borderRadius:14,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:16}}>✅</span>
                 <span style={{fontSize:12,fontWeight:800,color:"#1a7a1a"}}>通知权限已开启，提醒将按时送达</span>
               </div>
             )}
-
-            {/* PWA install tip */}
             <div style={{background:"rgba(255,245,200,0.7)",border:"1px solid rgba(200,170,50,0.4)",borderRadius:14,padding:"12px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
               <span style={{fontSize:18,flexShrink:0}}>💡</span>
-              <div style={{fontSize:12,color:"#7a6000",fontWeight:700,lineHeight:1.6}}>
-                <strong>建议添加到主屏幕</strong>（浏览器菜单 → 添加到主屏幕），这样 App 关闭时也能收到提醒。
-              </div>
+              <div style={{fontSize:12,color:"#7a6000",fontWeight:700,lineHeight:1.6}}>建议添加到主屏幕（浏览器菜单 → 添加到主屏幕），App 关闭时也能收到提醒。</div>
             </div>
-
             <div style={{fontSize:12,fontWeight:900,color:"#b060a0",letterSpacing:".08em",textTransform:"uppercase",marginBottom:12}}>提醒设置</div>
-
             {reminders.map((r,i)=>(
-              editingReminder===r.id ? (
-                <ReminderEditForm key={r.id} reminder={r}
-                  onSave={d=>{setReminders(rs=>rs.map(x=>x.id===r.id?{...x,...d}:x));setEditingReminder(null);}}
-                  onCancel={()=>setEditingReminder(null)}
-                />
-              ) : (
-                <div key={r.id} style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,190,220,0.4)",borderRadius:18,padding:"14px 16px",marginBottom:9}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <div style={{fontSize:24}}>{r.enabled?"🔔":"🔕"}</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:14,fontWeight:900,color:"#5a006a",marginBottom:2}}>{r.label}</div>
-                      <div style={{fontSize:12,color:"#c068a0",fontWeight:700}}>{r.time} · {r.message.slice(0,20)}…</div>
+              editingReminder===r.id
+                ? <ReminderEditForm key={r.id} reminder={r}
+                    onSave={d=>{setReminders(rs=>rs.map(x=>x.id===r.id?{...x,...d}:x));setEditingReminder(null);}}
+                    onCancel={()=>setEditingReminder(null)}/>
+                : <div key={r.id} style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,190,220,0.4)",borderRadius:18,padding:"14px 16px",marginBottom:9}}>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      <div style={{fontSize:24}}>{r.enabled?"🔔":"🔕"}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,fontWeight:900,color:"#5a006a",marginBottom:2}}>{r.label}</div>
+                        <div style={{fontSize:12,color:"#c068a0",fontWeight:700}}>{r.time} · {r.message.slice(0,20)}…</div>
+                      </div>
+                      <div onClick={()=>setReminders(rs=>rs.map(x=>x.id===r.id?{...x,enabled:!x.enabled}:x))}
+                        style={{width:44,height:24,borderRadius:12,background:r.enabled?"linear-gradient(135deg,#f0abcb,#d946a8)":"rgba(220,200,220,0.6)",cursor:"pointer",position:"relative",transition:"background .3s",flexShrink:0}}>
+                        <div style={{position:"absolute",top:3,left:r.enabled?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}}/>
+                      </div>
+                      <button className="edt-btn" onClick={()=>setEditingReminder(r.id)}>编辑</button>
                     </div>
-                    {/* Toggle switch */}
-                    <div
-                      onClick={()=>setReminders(rs=>rs.map(x=>x.id===r.id?{...x,enabled:!x.enabled}:x))}
-                      style={{width:44,height:24,borderRadius:12,background:r.enabled?"linear-gradient(135deg,#f0abcb,#d946a8)":"rgba(220,200,220,0.6)",cursor:"pointer",position:"relative",transition:"background .3s",flexShrink:0}}>
-                      <div style={{position:"absolute",top:3,left:r.enabled?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}}/>
-                    </div>
-                    <button className="edt-btn" onClick={()=>setEditingReminder(r.id)}>编辑</button>
                   </div>
-                </div>
-              )
             ))}
-
-            {/* Test button */}
-            {permission==="granted" && (
+            {permission==="granted"&&(
               <button className="add-dashed" style={{marginTop:8}} onClick={()=>fireNotification("🌸 测试提醒","这是一条测试通知，收到说明提醒功能正常！")}>
                 发送测试通知
               </button>
             )}
-
           </div>
         )}
 
-      </div>
-    </div>
-  );
-}
-
-// ── Reminder edit form (isolated state) ──────────────────────────────────────
-function ReminderEditForm({ reminder, onSave, onCancel }) {
-  const [d, setD] = useState({...reminder});
-  return (
-    <div className="edit-form" style={{marginBottom:10}}>
-      <div style={{fontSize:12,fontWeight:900,color:"#b060a0",marginBottom:10}}>{d.label} · 编辑提醒</div>
-      <label className="flbl">提醒名称</label>
-      <input className="finput" value={d.label} onChange={e=>setD(p=>({...p,label:e.target.value}))} placeholder="例如：早起打卡"/>
-      <label className="flbl">提醒时间</label>
-      <input className="finput" type="time" value={d.time} onChange={e=>setD(p=>({...p,time:e.target.value}))}/>
-      <label className="flbl">提醒内容</label>
-      <input className="finput" value={d.message} onChange={e=>setD(p=>({...p,message:e.target.value}))} placeholder="提醒文案"/>
-      <div style={{display:"flex",gap:8,marginTop:14}}>
-        <button className="save-btn" onClick={()=>onSave(d)}>保存</button>
-        <button className="can-btn" onClick={onCancel}>取消</button>
       </div>
     </div>
   );

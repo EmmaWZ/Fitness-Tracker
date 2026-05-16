@@ -1,4 +1,5 @@
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
+import { DEFAULT_REMINDERS, requestPermission, scheduleAll, fireNotification, getNextTriggerMs } from "./useNotifications";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_TASKS = [
@@ -166,13 +167,35 @@ export default function FitnessTracker() {
 
   const [defaultTasks,    setDefaultTasks]    = useState(()=>{ try{const s=localStorage.getItem("fit_default_tasks"); return s?JSON.parse(s):DEFAULT_TASKS;}catch{return DEFAULT_TASKS;} });
   const [extraTasksByDay, setExtraTasksByDay] = useState(()=>{ try{const s=localStorage.getItem("fit_extra_tasks");   return s?JSON.parse(s):{};}          catch{return {};} });
-  const [checkedByDay,    setCheckedByDay]    = useState(()=>{ try{const s=localStorage.getItem("fit_checked");       return s?JSON.parse(s):{};}          catch{return {};} });
+  const [checkedByDay, setCheckedByDay] = useState(() => {
+    try {
+      // Read per-day keys (fit_YYYY-MM-DD) for the past 14 days
+      const result = {};
+      const base = new Date();
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(base);
+        d.setDate(base.getDate() - i);
+        const key = d.toISOString().split("T")[0];
+        const s = localStorage.getItem(`fit_day_${key}`);
+        if (s) result[key] = JSON.parse(s);
+      }
+      return result;
+    } catch { return {}; }
+  });
   const [goal,            setGoal]            = useState(()=>{ try{const s=localStorage.getItem("fit_goal");          return s?JSON.parse(s):DEFAULT_GOAL;}catch{return DEFAULT_GOAL;} });
   const [weeklyPlan,      setWeeklyPlan]      = useState(()=>{ try{const s=localStorage.getItem("fit_weekly_plan");   return s?JSON.parse(s):DEFAULT_WEEKLY_PLAN;}catch{return DEFAULT_WEEKLY_PLAN;} });
 
   useEffect(()=>{ try{localStorage.setItem("fit_default_tasks",JSON.stringify(defaultTasks));}catch{} },[defaultTasks]);
   useEffect(()=>{ try{localStorage.setItem("fit_extra_tasks",  JSON.stringify(extraTasksByDay));}catch{} },[extraTasksByDay]);
-  useEffect(()=>{ try{localStorage.setItem("fit_checked",      JSON.stringify(checkedByDay));}catch{} },[checkedByDay]);
+  // Persist today's checked state to its own key whenever it changes
+  const todayCheckedForPersist = checkedByDay[todayKey];
+  useEffect(() => {
+    try {
+      if (todayCheckedForPersist) {
+        localStorage.setItem(`fit_day_${todayKey}`, JSON.stringify(todayCheckedForPersist));
+      }
+    } catch {}
+  }, [todayCheckedForPersist, todayKey]);
   useEffect(()=>{ try{localStorage.setItem("fit_goal",         JSON.stringify(goal));}catch{} },[goal]);
   useEffect(()=>{ try{localStorage.setItem("fit_weekly_plan",  JSON.stringify(weeklyPlan));}catch{} },[weeklyPlan]);
 
@@ -209,6 +232,14 @@ export default function FitnessTracker() {
   const [editingExtra,  setEditingExtra]  = useState(null);
   const [addingExtra,   setAddingExtra]   = useState(false);
   const [streak] = useState(7);
+
+  // Reminders
+  const [reminders, setReminders] = useState(() => { try { const s = localStorage.getItem("fit_reminders"); return s ? JSON.parse(s) : DEFAULT_REMINDERS; } catch { return DEFAULT_REMINDERS; } });
+  const [permission, setPermission] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  const [editingReminder, setEditingReminder] = useState(null);
+
+  useEffect(() => { try { localStorage.setItem("fit_reminders", JSON.stringify(reminders)); } catch {} }, [reminders]);
+  useEffect(() => { scheduleAll(reminders); }, [reminders, permission]);
 
   const toggle = id => setCheckedByDay(p=>({...p,[todayKey]:{...(p[todayKey]||{}),[id]:!(p[todayKey]?.[id])}}));
 
@@ -326,7 +357,7 @@ export default function FitnessTracker() {
 
         {/* ── TABS ── */}
         <div style={{display:"flex",gap:6,marginBottom:13,flexWrap:"wrap"}}>
-          {[["today","今日任务"],["week","每周计划"],["tips","减脂要点"]].map(([k,l])=>(
+          {[["today","今日任务"],["week","每周计划"],["tips","减脂要点"],["reminders","提醒"]].map(([k,l])=>(
             <button key={k} className={`tab-btn ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</button>
           ))}
         </div>
@@ -550,6 +581,107 @@ export default function FitnessTracker() {
           </div>
         )}
 
+        {/* ══════════════════════════════════════════════════════════════════════
+            REMINDERS TAB
+        ══════════════════════════════════════════════════════════════════════ */}
+        {tab==="reminders" && (
+          <div className="fu">
+
+            {/* Permission banner */}
+            {permission !== "granted" && (
+              <div style={{background:"rgba(255,220,240,0.7)",border:"1.5px solid rgba(217,70,168,0.3)",borderRadius:18,padding:"16px",marginBottom:16,textAlign:"center"}}>
+                <div style={{fontSize:22,marginBottom:6}}>🔔</div>
+                <div style={{fontSize:13,fontWeight:800,color:"#7a0070",marginBottom:4}}>
+                  {permission==="denied" ? "通知权限已被拒绝" : "开启通知权限"}
+                </div>
+                <div style={{fontSize:12,color:"#b060a0",fontWeight:700,marginBottom:12,lineHeight:1.6}}>
+                  {permission==="denied"
+                    ? "请到手机设置 → Chrome → 通知，手动开启权限"
+                    : "允许通知后，即可在指定时间收到健身提醒"}
+                </div>
+                {permission !== "denied" && (
+                  <button className="save-btn" onClick={async()=>{
+                    const p = await requestPermission();
+                    setPermission(p);
+                    if (p==="granted") scheduleAll(reminders);
+                  }}>允许通知</button>
+                )}
+              </div>
+            )}
+
+            {permission==="granted" && (
+              <div style={{background:"rgba(220,255,220,0.6)",border:"1px solid rgba(100,200,100,0.4)",borderRadius:14,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:16}}>✅</span>
+                <span style={{fontSize:12,fontWeight:800,color:"#1a7a1a"}}>通知权限已开启，提醒将按时送达</span>
+              </div>
+            )}
+
+            {/* PWA install tip */}
+            <div style={{background:"rgba(255,245,200,0.7)",border:"1px solid rgba(200,170,50,0.4)",borderRadius:14,padding:"12px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
+              <span style={{fontSize:18,flexShrink:0}}>💡</span>
+              <div style={{fontSize:12,color:"#7a6000",fontWeight:700,lineHeight:1.6}}>
+                <strong>建议添加到主屏幕</strong>（浏览器菜单 → 添加到主屏幕），这样 App 关闭时也能收到提醒。
+              </div>
+            </div>
+
+            <div style={{fontSize:12,fontWeight:900,color:"#b060a0",letterSpacing:".08em",textTransform:"uppercase",marginBottom:12}}>提醒设置</div>
+
+            {reminders.map((r,i)=>(
+              editingReminder===r.id ? (
+                <ReminderEditForm key={r.id} reminder={r}
+                  onSave={d=>{setReminders(rs=>rs.map(x=>x.id===r.id?{...x,...d}:x));setEditingReminder(null);}}
+                  onCancel={()=>setEditingReminder(null)}
+                />
+              ) : (
+                <div key={r.id} style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,190,220,0.4)",borderRadius:18,padding:"14px 16px",marginBottom:9}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{fontSize:24}}>{r.enabled?"🔔":"🔕"}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:14,fontWeight:900,color:"#5a006a",marginBottom:2}}>{r.label}</div>
+                      <div style={{fontSize:12,color:"#c068a0",fontWeight:700}}>{r.time} · {r.message.slice(0,20)}…</div>
+                    </div>
+                    {/* Toggle switch */}
+                    <div
+                      onClick={()=>setReminders(rs=>rs.map(x=>x.id===r.id?{...x,enabled:!x.enabled}:x))}
+                      style={{width:44,height:24,borderRadius:12,background:r.enabled?"linear-gradient(135deg,#f0abcb,#d946a8)":"rgba(220,200,220,0.6)",cursor:"pointer",position:"relative",transition:"background .3s",flexShrink:0}}>
+                      <div style={{position:"absolute",top:3,left:r.enabled?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}}/>
+                    </div>
+                    <button className="edt-btn" onClick={()=>setEditingReminder(r.id)}>编辑</button>
+                  </div>
+                </div>
+              )
+            ))}
+
+            {/* Test button */}
+            {permission==="granted" && (
+              <button className="add-dashed" style={{marginTop:8}} onClick={()=>fireNotification("🌸 测试提醒","这是一条测试通知，收到说明提醒功能正常！")}>
+                发送测试通知
+              </button>
+            )}
+
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ── Reminder edit form (isolated state) ──────────────────────────────────────
+function ReminderEditForm({ reminder, onSave, onCancel }) {
+  const [d, setD] = useState({...reminder});
+  return (
+    <div className="edit-form" style={{marginBottom:10}}>
+      <div style={{fontSize:12,fontWeight:900,color:"#b060a0",marginBottom:10}}>{d.label} · 编辑提醒</div>
+      <label className="flbl">提醒名称</label>
+      <input className="finput" value={d.label} onChange={e=>setD(p=>({...p,label:e.target.value}))} placeholder="例如：早起打卡"/>
+      <label className="flbl">提醒时间</label>
+      <input className="finput" type="time" value={d.time} onChange={e=>setD(p=>({...p,time:e.target.value}))}/>
+      <label className="flbl">提醒内容</label>
+      <input className="finput" value={d.message} onChange={e=>setD(p=>({...p,message:e.target.value}))} placeholder="提醒文案"/>
+      <div style={{display:"flex",gap:8,marginTop:14}}>
+        <button className="save-btn" onClick={()=>onSave(d)}>保存</button>
+        <button className="can-btn" onClick={onCancel}>取消</button>
       </div>
     </div>
   );

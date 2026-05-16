@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, memo } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { DEFAULT_REMINDERS, requestPermission, scheduleAll, fireNotification, getNextTriggerMs } from "./useNotifications";
+import { loadData, saveData } from "./supabase";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_TASKS = [
@@ -199,6 +200,55 @@ export default function FitnessTracker() {
   useEffect(()=>{ try{localStorage.setItem("fit_goal",         JSON.stringify(goal));}catch{} },[goal]);
   useEffect(()=>{ try{localStorage.setItem("fit_weekly_plan",  JSON.stringify(weeklyPlan));}catch{} },[weeklyPlan]);
 
+  // ── Cloud sync ─────────────────────────────────────────────────────────────
+  const [userId,       setUserId]       = useState(() => localStorage.getItem("fit_user_id") || "");
+  const [userIdInput,  setUserIdInput]  = useState("");
+  const [syncing,      setSyncing]      = useState(false);
+  const [syncStatus,   setSyncStatus]   = useState(null); // "ok" | "error" | null
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    setSyncing(true);
+    loadData(userId).then(data => {
+      if (data) {
+        if (data.defaultTasks)    setDefaultTasks(data.defaultTasks);
+        if (data.extraTasksByDay) setExtraTasksByDay(data.extraTasksByDay);
+        if (data.goal)            setGoal(data.goal);
+        if (data.weeklyPlan)      setWeeklyPlan(data.weeklyPlan);
+        if (data.reminders)       setReminders(data.reminders);
+        if (data.checkedByDay) {
+          setCheckedByDay(data.checkedByDay);
+          Object.entries(data.checkedByDay).forEach(([k,v]) => {
+            try { localStorage.setItem(`fit_day_${k}`, JSON.stringify(v)); } catch {}
+          });
+        }
+        setSyncStatus("ok");
+      }
+      setSyncing(false);
+    }).catch(() => { setSyncing(false); setSyncStatus("error"); });
+  }, [userId]);
+
+  const saveTimer_cb = useCallback(() => {
+    if (!userId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveData(userId, { defaultTasks, extraTasksByDay, goal, weeklyPlan, reminders, checkedByDay })
+        .then(ok => setSyncStatus(ok ? "ok" : "error"));
+    }, 2000);
+  }, [userId, defaultTasks, extraTasksByDay, goal, weeklyPlan, reminders, checkedByDay]);
+
+  useEffect(() => { saveTimer_cb(); }, [saveTimer_cb]);
+
+  const handleSetUserId = () => {
+    const id = userIdInput.trim();
+    if (!id) return;
+    localStorage.setItem("fit_user_id", id);
+    setUserId(id);
+    setSyncStatus(null);
+  };
+
+
   // Derived
   const todayPlan      = weeklyPlan[todayIdx];
   const todayFixed     = (todayPlan.fixedTasks || []);        // weekly recurring tasks for today
@@ -305,6 +355,34 @@ export default function FitnessTracker() {
       <div style={{position:"fixed",bottom:0,left:0,right:0,height:80,background:"linear-gradient(transparent,rgba(255,240,250,0.85))",pointerEvents:"none",zIndex:10}}/>
 
       <div style={{maxWidth:480,margin:"0 auto",padding:"24px 16px 72px",position:"relative",zIndex:2}}>
+
+        {/* ── SYNC STATUS BAR ── */}
+        {!userId ? (
+          <div style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",border:"1px solid rgba(255,190,220,0.4)",borderRadius:18,padding:"14px 16px",marginBottom:14,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>☁️</span>
+            <div style={{flex:1,minWidth:180}}>
+              <div style={{fontSize:13,fontWeight:900,color:"#5a006a",marginBottom:4}}>设置同步昵称</div>
+              <div style={{fontSize:11,color:"#c068a0",fontWeight:700}}>设置后可跨设备同步数据</div>
+            </div>
+            <input
+              style={{background:"rgba(255,255,255,0.7)",border:"1.5px solid rgba(240,180,220,0.6)",borderRadius:10,color:"#4a0060",padding:"7px 10px",fontSize:13,fontFamily:"'Nunito',sans-serif",fontWeight:700,outline:"none",width:"100%",marginTop:6}}
+              placeholder="输入你的昵称，例如：emma"
+              value={userIdInput}
+              onChange={e=>setUserIdInput(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&handleSetUserId()}
+            />
+            <button className="save-btn" style={{width:"100%",marginTop:6}} onClick={handleSetUserId}>开启云同步</button>
+          </div>
+        ) : (
+          <div style={{background:"rgba(255,255,255,0.55)",border:"1px solid rgba(255,190,220,0.35)",borderRadius:14,padding:"8px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:14}}>{syncing ? "🔄" : syncStatus==="ok" ? "☁️✅" : syncStatus==="error" ? "⚠️" : "☁️"}</span>
+            <span style={{fontSize:12,fontWeight:800,color:"#7a007a",flex:1}}>
+              {syncing ? "同步中…" : syncStatus==="ok" ? `已同步 · ${userId}` : syncStatus==="error" ? "同步失败，检查网络" : `已连接 · ${userId}`}
+            </span>
+            <button className="edt-btn" onClick={()=>{ localStorage.removeItem("fit_user_id"); setUserId(""); setUserIdInput(""); setSyncStatus(null); }}>切换</button>
+          </div>
+        )}
+
 
         {/* ── HEADER ── */}
         <div style={{...glass,padding:"22px 20px 20px",marginBottom:14,position:"relative",overflow:"hidden"}} className="fu">

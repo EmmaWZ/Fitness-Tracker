@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { DEFAULT_REMINDERS, requestPermission, scheduleAll, fireNotification } from "./useNotifications";
 import { loadData, saveData } from "./supabase";
+import FupoTab from "./FupoTab";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_TASKS = [
@@ -434,7 +435,7 @@ export default function FitnessTracker() {
 
         {/* ── TABS ── */}
         <div style={{display:"flex",gap:6,marginBottom:13,flexWrap:"wrap"}}>
-          {[["today","今日任务"],["week","每周计划"],["tips","减脂要点"],["reminders","提醒"]].map(([k,l])=>(
+          {[["today","今日任务"],["week","每周计划"],["tips","减脂要点"],["reminders","提醒"],["fupo","💰 富婆"]].map(([k,l])=>(
             <button key={k} className={`tab-btn ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</button>
           ))}
         </div>
@@ -662,6 +663,13 @@ export default function FitnessTracker() {
                 发送测试通知
               </button>
             )}
+          </div>
+        )}
+
+        {/* ══ FUPO ══ */}
+        {tab==="fupo" && (
+          <div className="fu">
+            <FupoTab todayKey={todayKey}/>
           </div>
         )}
 

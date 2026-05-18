@@ -161,61 +161,47 @@ const Pomodoro = memo(function Pomodoro() {
 });
 
 // ── Main FupoTab component ────────────────────────────────────────────────────
-export default function FupoTab({ todayKey, cloudData, onDataChange }) {
-  // ── State ─────────────────────────────────────────────────────────────────
-  const [workTasks,    setWorkTasks]    = useState(()=>{ try{ const s=localStorage.getItem("fupo_work_tasks"); return s?JSON.parse(s):DEFAULT_WORK_TASKS; }catch{ return DEFAULT_WORK_TASKS; } });
-  const [habits,       setHabits]       = useState(()=>{ try{ const s=localStorage.getItem("fupo_habits");     return s?JSON.parse(s):DEFAULT_HABITS;      }catch{ return DEFAULT_HABITS; } });
-  const [checkedWork,  setCheckedWork]  = useState(()=>{ try{ const s=localStorage.getItem(`fupo_wchk_${todayKey}`); return s?JSON.parse(s):{}; }catch{ return {}; } });
-  const [checkedHabit, setCheckedHabit] = useState(()=>{ try{ const s=localStorage.getItem(`fupo_hchk_${todayKey}`); return s?JSON.parse(s):{}; }catch{ return {}; } });
-  const [todos,        setTodos]        = useState(()=>{ try{ const s=localStorage.getItem(`fupo_todo_${todayKey}`);  return s?JSON.parse(s):[];  }catch{ return []; } });
-  const [todoInput,    setTodoInput]    = useState("");
-  // UI
-  const [subTab,           setSubTab]           = useState("daily");
-  const [managingWork,     setManagingWork]     = useState(false);
-  const [editingWork,      setEditingWork]      = useState(null);
-  const [addingWork,       setAddingWork]       = useState(false);
-  const [managingHabits,   setManagingHabits]   = useState(false);
-  const [editingHabit,     setEditingHabit]     = useState(null);
-  const [addingHabit,      setAddingHabit]      = useState(false);
+export default function FupoTab({
+  todayKey,
+  workTasks, setWorkTasks,
+  habits, setHabits,
+  checkedWork, setCheckedWork,
+  checkedHabit, setCheckedHabit,
+  todos, setTodos,
+}) {
+  // Use defaults if props arrive empty (first load before cloud sync)
+  const effectiveWorkTasks = (workTasks && effectiveWorkTasks.length > 0) ? workTasks : DEFAULT_WORK_TASKS;
+  const effectiveHabits    = (habits    && effectiveHabits.length    > 0) ? habits    : DEFAULT_HABITS;
+  const safeCheckedWork    = checkedWork  || {};
+  const safeCheckedHabit   = checkedHabit || {};
+  const safeTodos          = todos        || [];
 
-  // ── Persist ───────────────────────────────────────────────────────────────
-  useEffect(()=>{ try{ localStorage.setItem("fupo_work_tasks", JSON.stringify(workTasks)); }catch{} },[workTasks]);
-  useEffect(()=>{ try{ localStorage.setItem("fupo_habits",     JSON.stringify(habits));    }catch{} },[habits]);
-  useEffect(()=>{ try{ localStorage.setItem(`fupo_wchk_${todayKey}`, JSON.stringify(checkedWork));  }catch{} },[checkedWork,todayKey]);
-  useEffect(()=>{ try{ localStorage.setItem(`fupo_hchk_${todayKey}`, JSON.stringify(checkedHabit)); }catch{} },[checkedHabit,todayKey]);
-  useEffect(()=>{ try{ localStorage.setItem(`fupo_todo_${todayKey}`,  JSON.stringify(todos));        }catch{} },[todos,todayKey]);
-
-  // Notify parent for cloud sync
-  useEffect(()=>{
-    onDataChange && onDataChange({ workTasks, habits, checkedWork, checkedHabit, todos });
-  },[workTasks, habits, checkedWork, checkedHabit, todos]);
-
-  // Load from cloud if provided
-  useEffect(()=>{
-    if (!cloudData) return;
-    if (cloudData.workTasks)    setWorkTasks(cloudData.workTasks);
-    if (cloudData.habits)       setHabits(cloudData.habits);
-    if (cloudData.checkedWork)  setCheckedWork(cloudData.checkedWork);
-    if (cloudData.checkedHabit) setCheckedHabit(cloudData.checkedHabit);
-    if (cloudData.todos)        setTodos(cloudData.todos);
-  },[]);
+  // UI-only state stays local
+  const [todoInput,      setTodoInput]      = useState("");
+  const [subTab,         setSubTab]         = useState("daily");
+  const [managingWork,   setManagingWork]   = useState(false);
+  const [editingWork,    setEditingWork]    = useState(null);
+  const [addingWork,     setAddingWork]     = useState(false);
+  const [managingHabits, setManagingHabits] = useState(false);
+  const [editingHabit,   setEditingHabit]   = useState(null);
+  const [addingHabit,    setAddingHabit]    = useState(false);
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const workDone    = workTasks.filter(t=>checkedWork[t.id]).length;
-  const workXP      = workTasks.filter(t=>checkedWork[t.id]).reduce((s,t)=>s+(t.xp||0),0);
-  const maxWorkXP   = workTasks.reduce((s,t)=>s+(t.xp||0),0);
-  const workPct     = workTasks.length>0 ? Math.round((workDone/workTasks.length)*100) : 0;
-  const habitDone   = habits.filter(h=>checkedHabit[h.id]).length;
-  const todoDone    = todos.filter(t=>t.done).length;
+  const workDone    = effectiveWorkTasks.filter(t=>safeCheckedWork[t.id]).length;
+  const workXP      = effectiveWorkTasks.filter(t=>safeCheckedWork[t.id]).reduce((s,t)=>s+(t.xp||0),0);
+  const maxWorkXP   = effectiveWorkTasks.reduce((s,t)=>s+(t.xp||0),0);
+  const workPct     = effectiveWorkTasks.length>0 ? Math.round((workDone/effectiveWorkTasks.length)*100) : 0;
+  const habitDone   = effectiveHabits.filter(h=>safeCheckedHabit[h.id]).length;
+  const todoDone    = safeTodos.filter(t=>t.done).length;
 
   const addTodo = () => {
     const txt = todoInput.trim();
     if (!txt) return;
-    setTodos(ts=>[...ts,{id:genId(),text:txt,done:false}]);
+    setTodos(ts=>[...(ts||[]),{id:genId(),text:txt,done:false}]);
     setTodoInput("");
   };
-  const toggleTodo = id => setTodos(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
-  const deleteTodo = id => setTodos(ts=>ts.filter(t=>t.id!==id));
+  const toggleTodo = id => setTodos(ts=>(ts||[]).map(t=>t.id===id?{...t,done:!t.done}:t));
+  const deleteTodo = id => setTodos(ts=>(ts||[]).filter(t=>t.id!==id));
   const moveWork = (idx,dir) => setWorkTasks(ts=>{ const a=[...ts]; const to=idx+dir; if(to<0||to>=a.length) return a; [a[idx],a[to]]=[a[to],a[idx]]; return a; });
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -255,9 +241,9 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
         {/* Mini stats */}
         <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:14 }}>
           {[
-            { val:`${workDone}/${workTasks.length}`, lbl:"今日必做", color:"#c07000" },
-            { val:`${habitDone}/${habits.length}`,   lbl:"习惯打卡", color:"#a05000" },
-            { val:`${todoDone}/${todos.length}`,     lbl:"Todo",     color:"#806000" },
+            { val:`${workDone}/${effectiveWorkTasks.length}`, lbl:"今日必做", color:"#c07000" },
+            { val:`${habitDone}/${effectiveHabits.length}`,   lbl:"习惯打卡", color:"#a05000" },
+            { val:`${todoDone}/${safeTodos.length}`,     lbl:"Todo",     color:"#806000" },
           ].map((s,i)=>(
             <div key={i} style={{ background:"rgba(255,240,160,0.4)",border:"1px solid rgba(240,200,80,0.3)",borderRadius:12,padding:"8px",textAlign:"center" }}>
               <div style={{ fontSize:16,fontWeight:900,color:s.color }}>{s.val}</div>
@@ -274,7 +260,7 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
           <div style={{ textAlign:"right",fontSize:10,color:"#c09000",marginTop:4,fontWeight:700 }}>{workXP}/{maxWorkXP} XP · {workPct}% 完成</div>
         </div>
 
-        {workDone===workTasks.length&&workTasks.length>0&&(
+        {workDone===effectiveWorkTasks.length&&effectiveWorkTasks.length>0&&(
           <div style={{ marginTop:10,textAlign:"center",padding:"8px",background:"rgba(255,230,80,0.3)",borderRadius:12,color:"#7a5000",fontSize:13,fontWeight:900 }}>
             💰 今日必做全部完成！富婆就是你！
           </div>
@@ -292,7 +278,7 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
       {subTab==="daily" && (
         <div>
           <div className="fupo-section">
-            每日必做 · {workTasks.length} 项
+            每日必做 · {effectiveWorkTasks.length} 项
             <button style={{ background:"rgba(255,255,255,0.7)",border:"1px solid rgba(240,200,80,0.4)",color:"#a07000",borderRadius:10,padding:"3px 9px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif" }}
               onClick={()=>{setManagingWork(v=>!v);setEditingWork(null);setAddingWork(false);}}>
               {managingWork?"完成":"管理"}
@@ -301,16 +287,16 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
 
           {managingWork ? (
             <div>
-              {workTasks.map((task,idx)=>(
+              {effectiveWorkTasks.map((task,idx)=>(
                 editingWork===task.id
                   ? <WorkTaskForm key={task.id} task={task}
-                      onSave={d=>{setWorkTasks(ts=>ts.map(t=>t.id===task.id?{...t,...d}:t));setEditingWork(null);}}
+                      onSave={d=>{setWorkTasks(ts=>(ts||[]).map(t=>t.id===task.id?{...t,...d}:t));setEditingWork(null);}}
                       onCancel={()=>setEditingWork(null)}
-                      onDelete={()=>{setWorkTasks(ts=>ts.filter(t=>t.id!==task.id));setEditingWork(null);}}/>
+                      onDelete={()=>{setWorkTasks(ts=>(ts||[]).filter(t=>t.id!==task.id));setEditingWork(null);}}/>
                   : <div key={task.id} className="fupo-manage-row">
                       <div style={{ display:"flex",flexDirection:"column",gap:2 }}>
                         <button className="icon-btn" onClick={()=>moveWork(idx,-1)} disabled={idx===0} style={{ opacity:idx===0?.3:1 }}>↑</button>
-                        <button className="icon-btn" onClick={()=>moveWork(idx,+1)} disabled={idx===workTasks.length-1} style={{ opacity:idx===workTasks.length-1?.3:1 }}>↓</button>
+                        <button className="icon-btn" onClick={()=>moveWork(idx,+1)} disabled={idx===effectiveWorkTasks.length-1} style={{ opacity:idx===effectiveWorkTasks.length-1?.3:1 }}>↓</button>
                       </div>
                       <div style={{ fontSize:20 }}>{task.icon}</div>
                       <div style={{ flex:1,minWidth:0 }}>
@@ -318,28 +304,28 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
                         <div style={{ fontSize:11,color:"#c09000",fontWeight:700 }}>{task.category} · {task.duration}</div>
                       </div>
                       <button style={{ background:"rgba(255,255,255,0.7)",border:"1px solid rgba(240,200,80,0.4)",color:"#a07000",borderRadius:9,padding:"3px 8px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif",flexShrink:0 }} onClick={()=>setEditingWork(task.id)}>编辑</button>
-                      <button className="icon-btn" style={{ color:"#e05080",borderColor:"rgba(255,160,180,0.4)" }} onClick={()=>setWorkTasks(ts=>ts.filter(t=>t.id!==task.id))}>✕</button>
+                      <button className="icon-btn" style={{ color:"#e05080",borderColor:"rgba(255,160,180,0.4)" }} onClick={()=>setWorkTasks(ts=>(ts||[]).filter(t=>t.id!==task.id))}>✕</button>
                     </div>
               ))}
               {addingWork
                 ? <WorkTaskForm task={{id:genId(),icon:"⭐",title:"",category:"",duration:"",xp:20}} title="＋ 新增必做事项"
-                    onSave={d=>{setWorkTasks(ts=>[...ts,{...d,id:genId()}]);setAddingWork(false);}}
+                    onSave={d=>{setWorkTasks(ts=>[...(ts||[]),{...d,id:genId()}]);setAddingWork(false);}}
                     onCancel={()=>setAddingWork(false)}/>
                 : <button className="fupo-add-dashed" onClick={()=>setAddingWork(true)}>＋ 新增必做事项</button>
               }
             </div>
           ) : (
-            workTasks.map(task=>(
-              <div key={task.id} className={`fupo-task-row ${checkedWork[task.id]?"done":""}`}
+            effectiveWorkTasks.map(task=>(
+              <div key={task.id} className={`fupo-task-row ${safeCheckedWork[task.id]?"done":""}`}
                 onClick={()=>setCheckedWork(p=>({...p,[task.id]:!p[task.id]}))}>
-                <button className={`fupo-chk ${checkedWork[task.id]?"done":""}`}
+                <button className={`fupo-chk ${safeCheckedWork[task.id]?"done":""}`}
                   onClick={e=>{e.stopPropagation();setCheckedWork(p=>({...p,[task.id]:!p[task.id]}));}}>
-                  {checkedWork[task.id]?"✓":""}
+                  {safeCheckedWork[task.id]?"✓":""}
                 </button>
                 <div style={{ fontSize:20,flexShrink:0 }}>{task.icon}</div>
                 <div style={{ flex:1,minWidth:0 }}>
                   <div style={{ marginBottom:3 }}><span className="fupo-tag">{task.category}</span><span className="fupo-xpb">+{task.xp} XP</span></div>
-                  <div style={{ fontSize:14,fontWeight:800,color:checkedWork[task.id]?"#c09060":"#5a3000",textDecoration:checkedWork[task.id]?"line-through":"none" }}>{task.title}</div>
+                  <div style={{ fontSize:14,fontWeight:800,color:safeCheckedWork[task.id]?"#c09060":"#5a3000",textDecoration:safeCheckedWork[task.id]?"line-through":"none" }}>{task.title}</div>
                   <div style={{ fontSize:11,color:"#c09000",fontWeight:700 }}>{task.duration}</div>
                 </div>
               </div>
@@ -352,7 +338,7 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
       {subTab==="habits" && (
         <div>
           <div className="fupo-section">
-            今日习惯 · {habitDone}/{habits.length} 完成
+            今日习惯 · {habitDone}/{effectiveHabits.length} 完成
             <button style={{ background:"rgba(255,255,255,0.7)",border:"1px solid rgba(240,200,80,0.4)",color:"#a07000",borderRadius:10,padding:"3px 9px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif" }}
               onClick={()=>{setManagingHabits(v=>!v);setEditingHabit(null);setAddingHabit(false);}}>
               {managingHabits?"完成":"管理"}
@@ -361,12 +347,12 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
 
           {managingHabits ? (
             <div>
-              {habits.map(h=>(
+              {effectiveHabits.map(h=>(
                 editingHabit===h.id
                   ? <HabitForm key={h.id} habit={h}
-                      onSave={d=>{setHabits(hs=>hs.map(x=>x.id===h.id?{...x,...d}:x));setEditingHabit(null);}}
+                      onSave={d=>{setHabits(hs=>(hs||[]).map(x=>x.id===h.id?{...x,...d}:x));setEditingHabit(null);}}
                       onCancel={()=>setEditingHabit(null)}
-                      onDelete={()=>{setHabits(hs=>hs.filter(x=>x.id!==h.id));setEditingHabit(null);}}/>
+                      onDelete={()=>{setHabits(hs=>(hs||[]).filter(x=>x.id!==h.id));setEditingHabit(null);}}/>
                   : <div key={h.id} className="fupo-manage-row">
                       <div style={{ fontSize:22 }}>{h.icon}</div>
                       <div style={{ flex:1,minWidth:0 }}>
@@ -374,33 +360,33 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
                         <div style={{ fontSize:11,color:"#c09000",fontWeight:700 }}>{h.desc}</div>
                       </div>
                       <button style={{ background:"rgba(255,255,255,0.7)",border:"1px solid rgba(240,200,80,0.4)",color:"#a07000",borderRadius:9,padding:"3px 8px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif",flexShrink:0 }} onClick={()=>setEditingHabit(h.id)}>编辑</button>
-                      <button className="icon-btn" style={{ color:"#e05080",borderColor:"rgba(255,160,180,0.4)" }} onClick={()=>setHabits(hs=>hs.filter(x=>x.id!==h.id))}>✕</button>
+                      <button className="icon-btn" style={{ color:"#e05080",borderColor:"rgba(255,160,180,0.4)" }} onClick={()=>setHabits(hs=>(hs||[]).filter(x=>x.id!==h.id))}>✕</button>
                     </div>
               ))}
               {addingHabit
                 ? <HabitForm habit={{id:genId(),icon:"⭐",title:"",desc:""}} title="＋ 添加新习惯"
-                    onSave={d=>{setHabits(hs=>[...hs,{...d,id:genId()}]);setAddingHabit(false);}}
+                    onSave={d=>{setHabits(hs=>[...(hs||[]),{...d,id:genId()}]);setAddingHabit(false);}}
                     onCancel={()=>setAddingHabit(false)}/>
                 : <button className="fupo-add-dashed" onClick={()=>setAddingHabit(true)}>＋ 添加新习惯</button>
               }
             </div>
           ) : (
-            habits.map(h=>(
+            effectiveHabits.map(h=>(
               <div key={h.id} className="habit-card">
-                <div className={`habit-chk ${checkedHabit[h.id]?"done":""}`}
+                <div className={`habit-chk ${safeCheckedHabit[h.id]?"done":""}`}
                   onClick={()=>setCheckedHabit(p=>({...p,[h.id]:!p[h.id]}))}>
-                  {checkedHabit[h.id] ? "✓" : <span style={{ fontSize:18 }}>{h.icon}</span>}
+                  {safeCheckedHabit[h.id] ? "✓" : <span style={{ fontSize:18 }}>{h.icon}</span>}
                 </div>
                 <div style={{ flex:1,minWidth:0 }}>
-                  <div style={{ fontSize:14,fontWeight:800,color:checkedHabit[h.id]?"#c09060":"#5a3000",textDecoration:checkedHabit[h.id]?"line-through":"none" }}>{h.title}</div>
+                  <div style={{ fontSize:14,fontWeight:800,color:safeCheckedHabit[h.id]?"#c09060":"#5a3000",textDecoration:safeCheckedHabit[h.id]?"line-through":"none" }}>{h.title}</div>
                   <div style={{ fontSize:11,color:"#c09000",fontWeight:700 }}>{h.desc}</div>
                 </div>
-                {checkedHabit[h.id] && <span style={{ fontSize:18 }}>✅</span>}
+                {safeCheckedHabit[h.id] && <span style={{ fontSize:18 }}>✅</span>}
               </div>
             ))
           )}
 
-          {habitDone===habits.length&&habits.length>0&&(
+          {habitDone===effectiveHabits.length&&effectiveHabits.length>0&&(
             <div style={{ textAlign:"center",padding:"12px",background:"rgba(255,230,80,0.25)",border:"1px solid rgba(240,200,80,0.3)",borderRadius:14,color:"#7a5000",fontSize:13,fontWeight:900,marginTop:8 }}>
               🏆 今日习惯全部打卡！
             </div>
@@ -411,7 +397,7 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
       {/* ══ TODO ══ */}
       {subTab==="todo" && (
         <div>
-          <div className="fupo-section">今日 Todo · {todoDone}/{todos.length} 完成</div>
+          <div className="fupo-section">今日 Todo · {todoDone}/{safeTodos.length} 完成</div>
 
           {/* Input */}
           <div style={{ display:"flex",gap:8,marginBottom:14 }}>
@@ -428,12 +414,12 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
             </button>
           </div>
 
-          {todos.length===0 && (
+          {safeTodos.length===0 && (
             <div style={{ textAlign:"center",padding:"20px 0",color:"#c09000",fontSize:13,fontWeight:700 }}>今天还没有 Todo，加一个吧 💪</div>
           )}
 
           {/* Undone */}
-          {todos.filter(t=>!t.done).map(t=>(
+          {safeTodos.filter(t=>!t.done).map(t=>(
             <div key={t.id} className="todo-row">
               <div className="todo-chk" onClick={()=>toggleTodo(t.id)}></div>
               <div style={{ flex:1,fontSize:13,fontWeight:700,color:"#5a3000" }}>{t.text}</div>
@@ -442,9 +428,9 @@ export default function FupoTab({ todayKey, cloudData, onDataChange }) {
           ))}
 
           {/* Done */}
-          {todos.filter(t=>t.done).length>0 && <>
+          {safeTodos.filter(t=>t.done).length>0 && <>
             <div className="fupo-section" style={{ margin:"14px 0 8px" }}>已完成</div>
-            {todos.filter(t=>t.done).map(t=>(
+            {safeTodos.filter(t=>t.done).map(t=>(
               <div key={t.id} className="todo-row" style={{ opacity:.6 }}>
                 <div className="todo-chk done" onClick={()=>toggleTodo(t.id)}>✓</div>
                 <div style={{ flex:1,fontSize:13,fontWeight:700,color:"#a08060",textDecoration:"line-through" }}>{t.text}</div>

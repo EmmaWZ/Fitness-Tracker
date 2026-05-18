@@ -199,6 +199,11 @@ export default function FitnessTracker() {
   });
   const [goal,       setGoal]       = useState(()=>{ try{const s=localStorage.getItem("fit_goal");        return s?JSON.parse(s):DEFAULT_GOAL;}catch{return DEFAULT_GOAL;} });
   const [weeklyPlan, setWeeklyPlan] = useState(()=>{ try{const s=localStorage.getItem("fit_weekly_plan"); return s?JSON.parse(s):DEFAULT_WEEKLY_PLAN;}catch{return DEFAULT_WEEKLY_PLAN;} });
+  const [fupoWorkTasks,    setFupoWorkTasks]    = useState(()=>{ try{const s=localStorage.getItem("fupo_work_tasks"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [fupoHabits,       setFupoHabits]       = useState(()=>{ try{const s=localStorage.getItem("fupo_habits");     return s?JSON.parse(s):[];}catch{return [];} });
+  const [fupoCheckedWork,  setFupoCheckedWork]  = useState(()=>{ try{const s=localStorage.getItem("fupo_wchk_"+new Date().toISOString().split("T")[0]); return s?JSON.parse(s):{};}catch{return {};} });
+  const [fupoCheckedHabit, setFupoCheckedHabit] = useState(()=>{ try{const s=localStorage.getItem("fupo_hchk_"+new Date().toISOString().split("T")[0]); return s?JSON.parse(s):{};}catch{return {};} });
+  const [fupoTodos,        setFupoTodos]        = useState(()=>{ try{const s=localStorage.getItem("fupo_todo_"+new Date().toISOString().split("T")[0]);  return s?JSON.parse(s):[];}catch{return [];} });
   const [reminders,  setReminders]  = useState(()=>{ try{const s=localStorage.getItem("fit_reminders");   return s?JSON.parse(s):DEFAULT_REMINDERS;}catch{return DEFAULT_REMINDERS;} });
   const [permission, setPermission] = useState(typeof Notification!=="undefined" ? Notification.permission : "unsupported");
   // Cloud sync
@@ -228,6 +233,11 @@ export default function FitnessTracker() {
   useEffect(()=>{ try{localStorage.setItem("fit_extra_tasks",  JSON.stringify(extraTasksByDay));}catch{} },[extraTasksByDay]);
   useEffect(()=>{ try{localStorage.setItem("fit_goal",         JSON.stringify(goal));}catch{} },[goal]);
   useEffect(()=>{ try{localStorage.setItem("fit_weekly_plan",  JSON.stringify(weeklyPlan));}catch{} },[weeklyPlan]);
+  useEffect(()=>{ try{localStorage.setItem("fupo_work_tasks",JSON.stringify(fupoWorkTasks));}catch{} },[fupoWorkTasks]);
+  useEffect(()=>{ try{localStorage.setItem("fupo_habits",    JSON.stringify(fupoHabits));}catch{} },[fupoHabits]);
+  useEffect(()=>{ try{localStorage.setItem("fupo_wchk_"+todayKey, JSON.stringify(fupoCheckedWork));}catch{} },[fupoCheckedWork,todayKey]);
+  useEffect(()=>{ try{localStorage.setItem("fupo_hchk_"+todayKey, JSON.stringify(fupoCheckedHabit));}catch{} },[fupoCheckedHabit,todayKey]);
+  useEffect(()=>{ try{localStorage.setItem("fupo_todo_"+todayKey,  JSON.stringify(fupoTodos));}catch{} },[fupoTodos,todayKey]);
   useEffect(()=>{ try{localStorage.setItem("fit_reminders",    JSON.stringify(reminders));}catch{} },[reminders]);
   useEffect(()=>{ scheduleAll(reminders); },[reminders, permission]);
 
@@ -247,6 +257,11 @@ export default function FitnessTracker() {
         if (data.goal)            setGoal(data.goal);
         if (data.weeklyPlan)      setWeeklyPlan(data.weeklyPlan);
         if (data.reminders)       setReminders(data.reminders);
+        if (data.fupoWorkTasks)    setFupoWorkTasks(data.fupoWorkTasks);
+        if (data.fupoHabits)       setFupoHabits(data.fupoHabits);
+        if (data.fupoCheckedWork)  setFupoCheckedWork(data.fupoCheckedWork);
+        if (data.fupoCheckedHabit) setFupoCheckedHabit(data.fupoCheckedHabit);
+        if (data.fupoTodos)        setFupoTodos(data.fupoTodos);
         if (data.checkedByDay) {
           setCheckedByDay(data.checkedByDay);
           Object.entries(data.checkedByDay).forEach(([k,v])=>{ try{localStorage.setItem(`fit_day_${k}`,JSON.stringify(v));}catch{} });
@@ -262,10 +277,10 @@ export default function FitnessTracker() {
     if (!userId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(()=>{
-      saveData(userId,{defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay})
+      saveData(userId,{defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay,fupoWorkTasks,fupoHabits,fupoCheckedWork,fupoCheckedHabit,fupoTodos})
         .then(ok=>setSyncStatus(ok?"ok":"error"));
     }, 2000);
-  },[userId,defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay]);
+  },[userId,defaultTasks,extraTasksByDay,goal,weeklyPlan,reminders,checkedByDay,fupoWorkTasks,fupoHabits,fupoCheckedWork,fupoCheckedHabit,fupoTodos]);
   useEffect(()=>{ doCloudSave(); },[doCloudSave]);
 
   const handleSetUserId = ()=>{
@@ -669,7 +684,13 @@ export default function FitnessTracker() {
         {/* ══ FUPO ══ */}
         {tab==="fupo" && (
           <div className="fu">
-            <FupoTab todayKey={todayKey}/>
+            <FupoTab todayKey={todayKey}
+              workTasks={fupoWorkTasks} setWorkTasks={setFupoWorkTasks}
+              habits={fupoHabits} setHabits={setFupoHabits}
+              checkedWork={fupoCheckedWork} setCheckedWork={setFupoCheckedWork}
+              checkedHabit={fupoCheckedHabit} setCheckedHabit={setFupoCheckedHabit}
+              todos={fupoTodos} setTodos={setFupoTodos}
+            />
           </div>
         )}
 

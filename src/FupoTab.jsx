@@ -170,8 +170,8 @@ export default function FupoTab({
   todos, setTodos,
 }) {
   // Use defaults if props arrive empty (first load before cloud sync)
-  const effectiveWorkTasks = (workTasks && effectiveWorkTasks.length > 0) ? workTasks : DEFAULT_WORK_TASKS;
-  const effectiveHabits    = (habits    && effectiveHabits.length    > 0) ? habits    : DEFAULT_HABITS;
+  const effectiveWorkTasks = (workTasks && workTasks.length > 0) ? workTasks : DEFAULT_WORK_TASKS;
+  const effectiveHabits    = (habits    && habits.length    > 0) ? habits    : DEFAULT_HABITS;
   const safeCheckedWork    = checkedWork  || {};
   const safeCheckedHabit   = checkedHabit || {};
   const safeTodos          = todos        || [];
@@ -202,7 +202,7 @@ export default function FupoTab({
   };
   const toggleTodo = id => setTodos(ts=>(ts||[]).map(t=>t.id===id?{...t,done:!t.done}:t));
   const deleteTodo = id => setTodos(ts=>(ts||[]).filter(t=>t.id!==id));
-  const moveWork = (idx,dir) => setWorkTasks(ts=>{ const a=[...ts]; const to=idx+dir; if(to<0||to>=a.length) return a; [a[idx],a[to]]=[a[to],a[idx]]; return a; });
+  const moveWork = (idx,dir) => setWorkTasks(ts=>{ const a=[...(ts||[])]; const to=idx+dir; if(to<0||to>=a.length) return a; [a[idx],a[to]]=[a[to],a[idx]]; return a; });
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const gold = "linear-gradient(135deg,#f6c940,#f0a000)";
